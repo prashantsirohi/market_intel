@@ -17,6 +17,21 @@ class Settings:
     critical_immediate: bool = True
     batch_interval_minutes: int = 15
 
+    openrouter_api_key: str | None = os.environ.get("OPENROUTER_API_KEY")
+    openrouter_model: str = "openai/gpt-4o-mini"
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_max_tokens: int = 1024
+
+    pytesseract_cmd: str | None = os.environ.get("PYTESSERACT_CMD")
+
+    scheduler_rss_interval_minutes: int = 5
+    scheduler_api_interval_minutes: int = 15
+    scheduler_llm_interval_minutes: int = 30
+    scheduler_backfill_on_start: bool = False
+
+    backfill_max_days: int = 30
+    backfill_batch_size: int = 100
+
     def __post_init__(self) -> None:
         Path(self.data_dir).mkdir(parents=True, exist_ok=True)
 
