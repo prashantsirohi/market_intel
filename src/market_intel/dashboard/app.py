@@ -52,7 +52,6 @@ def load_raw_events(db_path: str) -> pd.DataFrame:
             """
             SELECT
                 id,
-                created_at,
                 title,
                 symbol,
                 category,
@@ -60,10 +59,9 @@ def load_raw_events(db_path: str) -> pd.DataFrame:
                 sentiment,
                 link,
                 pub_date,
-                seen_count,
-                last_seen_at
+                description
             FROM raw_events
-            ORDER BY created_at DESC
+            ORDER BY id DESC
             LIMIT 1000
             """
         ).fetchdf()
@@ -81,19 +79,13 @@ def load_alerts(db_path: str) -> pd.DataFrame:
         return conn.execute(
             """
             SELECT
-              a.created_at,
-              a.sent_at,
-              a.channel,
-              a.alert_status,
-              a.error_message,
-              r.symbol,
-              r.primary_category,
-              r.alert_level,
-              e.title
-            FROM alert_log a
-            JOIN resolved_event r ON r.resolved_event_id = a.resolved_event_id
-            JOIN raw_event e ON e.raw_event_id = r.raw_event_id
-            ORDER BY a.created_at DESC
+              sent_at,
+              channel,
+              alert_status,
+              error_message,
+              resolved_event_id
+            FROM alert_log
+            ORDER BY sent_at DESC
             LIMIT 500
             """
         ).fetchdf()
@@ -166,21 +158,26 @@ def main():
             filtered = filtered[filtered["importance"] < 5]
         if category != "All":
             filtered = filtered[filtered["category"] == category]
+        
+        # Always filter out NAV
+        filtered = filtered[filtered["category"] != "mutual_fund_nav"]
 
         st.dataframe(
             filtered[
                 [
-                    "created_at",
+                    "id",
                     "symbol",
                     "category",
                     "importance",
                     "sentiment",
                     "title",
-                    "link",
                 ]
             ],
             use_container_width=True,
             hide_index=True,
+            column_config={
+                "title": st.column_config.LinkColumn("Title", display_text="Link"),
+            },
         )
 
     with tab3:
@@ -198,44 +195,46 @@ def main():
             st.dataframe(
                 alerts[
                     [
-                        "created_at",
                         "sent_at",
                         "channel",
                         "alert_status",
-                        "symbol",
-                        "primary_category",
-                        "alert_level",
-                        "title",
+                        "resolved_event_id",
+                        "error_message",
                     ]
                 ],
                 use_container_width=True,
                 hide_index=True,
             )
 
-    with tab4:
+with tab4:
         st.subheader("Stock View")
-        symbol = st.selectbox(
-            "Select Symbol", sorted([x for x in events["symbol"].dropna().unique() if x])
-        )
-        stock_df = events[events["symbol"] == symbol]
+        
+        # Get unique symbols from filtered events
+        event_symbols = sorted([x for x in events["symbol"].dropna().unique() if x and len(x) >= 2])
+        
+        if not event_symbols:
+            st.info("No symbols found. Symbols are extracted from event GUIDs.")
+        else:
+            symbol = st.selectbox("Select Symbol", event_symbols)
+            stock_df = events[events["symbol"] == symbol]
 
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Events", len(stock_df))
-        c2.metric("Critical", int((stock_df["importance"] >= 8.5).sum()))
-        c3.metric("Important", int((stock_df["importance"] >= 7).sum()))
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Events", len(stock_df))
+            c2.metric("Critical", int((stock_df["importance"] >= 8.5).sum()))
+            c3.metric("Important", int((stock_df["importance"] >= 7).sum()))
 
-        st.subheader("Recent Events")
-        st.dataframe(
-            stock_df[
-                [
-                    "created_at",
-                    "category",
-                    "importance",
-                    "sentiment",
-                    "title",
-                ]
-            ],
-            use_container_width=True,
+            st.subheader("Recent Events")
+            st.dataframe(
+                stock_df[
+                    [
+                        "id",
+                        "category",
+                        "importance",
+                        "sentiment",
+                        "title",
+                    ]
+                ],
+use_container_width=True,
             hide_index=True,
         )
 
