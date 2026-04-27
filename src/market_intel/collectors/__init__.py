@@ -6,11 +6,21 @@ from market_intel.collectors.nse_rss import (
     EmptyBodyError,
     XmlParseError,
 )
-from market_intel.collectors.corporate_filings import (
+from market_intel.collectors.nse_api import (
     NseApiClient,
-    CorpFiling,
+    ApiItem,
     NseApiError,
     TemporaryNseApiError,
+)
+from market_intel.collectors.pdf_fetcher import (
+    PdfFetcher,
+    PdfFetchResult,
+)
+from market_intel.collectors.corporate_filings import (
+    NseApiClient as LegacyNseApiClient,
+    CorpFiling,
+    NseApiError as LegacyNseApiError,
+    TemporaryNseApiError as LegacyTemporaryNseApiError,
 )
 
 __all__ = [
@@ -21,7 +31,10 @@ __all__ = [
     "EmptyBodyError",
     "XmlParseError",
     "NseApiClient",
-    "CorpFiling",
+    "ApiItem",
     "NseApiError",
     "TemporaryNseApiError",
+    "PdfFetcher",
+    "PdfFetchResult",
+    "CorpFiling",
 ]
