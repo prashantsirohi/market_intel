@@ -26,7 +26,7 @@ class Settings:
     batch_interval_minutes: int = 15
 
     openrouter_api_key: str | None = os.environ.get("OPENROUTER_API_KEY")
-    openrouter_model: str = "openrouter/free"
+    openrouter_model: str = "inclusionai/ling-2.6-1t:free"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_max_tokens: int = 1024
 

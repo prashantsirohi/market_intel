@@ -121,28 +121,32 @@ class LlmAnalyser:
     def _build_prompt(self, title: str, symbol: str, category: str | None, text: str) -> tuple[str, str]:
         system_prompt = """You are a financial analyst specializing in Indian listed companies (NSE/BSE).
 Analyze the corporate filing text and extract structured financial information.
-Return ONLY valid JSON matching this schema:
+Return ONLY valid JSON (no markdown, no explanation).
+
+Schema:
 {
-  "primary_category": "management_change|results|capex_expansion|dividend|buyback|rights_issue|regulatory|merger|other",
+  "primary_category": "results"|"dividend"|"buyback"|"capex_expansion"|"management_change"|"rights_issue"|"merger"|"regulatory"|"other",
   "secondary_categories": [],
-  "sentiment": "positive|negative|neutral",
-  "sentiment_score": -1.0 to 1.0,
-  "importance_score": 0.0 to 10.0,
-  "revenue_cr": null or number,
-  "pat_cr": null or number,
-  "eps": null or number,
-  "revenue_yoy_pct": null or number,
-  "pat_yoy_pct": null or number,
-  "capex_amount_cr": null or number,
-  "order_value_cr": null or number,
-  "dividend_per_share": null or number,
-  "buyback_size_cr": null or number,
-  "one_line_summary": "max 120 chars",
-  "key_highlights": ["3-5 bullet points"],
-  "management_guidance": null or string,
+  "sentiment": "positive"|"negative"|"neutral",
+  "sentiment_score": 0.0,
+  "importance_score": 5.0,
+  "revenue_cr": null,
+  "pat_cr": null,
+  "eps": null,
+  "revenue_yoy_pct": null,
+  "pat_yoy_pct": null,
+  "capex_amount_cr": null,
+  "order_value_cr": null,
+  "dividend_per_share": null,
+  "buyback_size_cr": null,
+  "one_line_summary": "",
+  "key_highlights": [],
+  "management_guidance": null,
   "risk_flags": [],
-  "period_label": "Q1 FY25" or null
-}"""
+  "period_label": null
+}
+
+Return only JSON object, no text before or after."""
 
         user_prompt = f"""Filing: {title}
 Symbol: {symbol}
@@ -186,11 +190,19 @@ Return ONLY the JSON, no other text."""
         data = resp.json()
         return data["choices"][0]["message"]["content"]
 
-    def _parse_response(self, raw: str, fallback_title: str) -> InsightPayload:
+    def _parse_response(self, raw: str | None, fallback_title: str) -> InsightPayload:
+        if not raw:
+            logger.warning("Empty LLM response")
+            return InsightPayload(
+                one_line_summary=fallback_title[:120],
+                model_used=self.model,
+            )
+        
         try:
             json_str = raw.strip()
             if json_str.startswith("```"):
-                json_str = json_str.split("```")[1]
+                parts = json_str.split("```")
+                json_str = parts[1] if len(parts) > 1 else parts[0]
                 if json_str.startswith("json"):
                     json_str = json_str[4:]
             json_str = json_str.strip()
@@ -220,7 +232,7 @@ Return ONLY the JSON, no other text."""
                 model_used=self.model,
             )
         except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse LLM response: {e}")
+            logger.warning(f"Failed to parse LLM response: {e}, raw: {raw[:200] if raw else 'None'}")
             return InsightPayload(
                 one_line_summary=fallback_title[:120],
                 model_used=self.model,
