@@ -1,21 +1,4 @@
-from __future__ import annotations
-
-CRITICAL_CATEGORIES = {
-    "management_change",
-    "regulatory_legal",
-    "promoter_pledge",
-    "buyback",
-    "major_order_win",
-    "capex_expansion",
-}
-
-IMPORTANT_CATEGORIES = {
-    "board_meeting",
-    "results",
-    "dividend",
-    "rights_issue",
-    "fundraise",
-}
+from market_intel.processing.taxonomy import IGNORE_CATEGORIES, TIER_A
 
 
 def decide_alert_level(
@@ -25,14 +8,18 @@ def decide_alert_level(
     trust_score: float,
     is_official: bool,
 ) -> str:
-    category = (primary_category or "").strip().lower()
+    category = (primary_category or "general").lower()
 
-    if category in CRITICAL_CATEGORIES and trust_score >= 80:
+    if category in IGNORE_CATEGORIES:
+        return "ignore"
+
+    if category in TIER_A and trust_score >= 80:
         return "critical"
+
     if importance_score >= 8.5 and trust_score >= 85 and (is_official or trust_score >= 90):
         return "critical"
-    if category in IMPORTANT_CATEGORIES and trust_score >= 60:
-        return "important"
+
     if importance_score >= 7.0 and trust_score >= 60:
         return "important"
+
     return "info"

@@ -406,6 +406,8 @@ class ResolvedEventRepository:
         summary_text: Optional[str] = None,
         key_facts: Optional[list[str]] = None,
         status: str = "pending",
+        event_tier: Optional[str] = None,
+        ignored_reason: Optional[str] = None,
     ) -> ResolvedEvent:
         key_facts_json = json.dumps(key_facts or [])
 
@@ -424,8 +426,8 @@ class ResolvedEventRepository:
             now = datetime.now().isoformat()
             conn.execute(
                 f"""
-                INSERT INTO resolved_event(resolved_event_id, raw_event_id, entity_id, primary_category, secondary_category, sentiment_label, sentiment_score, importance_score, trust_score, parser_confidence, novelty_score, alert_level, is_official, summary_text, key_facts_json, status, resolved_at)
-                VALUES ({next_id}, {raw_event_id}, {_v(entity_id)}, {_v(primary_category)}, {_v(secondary_category)}, {_v(sentiment_label)}, {_v(sentiment_score)}, {_v(importance_score)}, {_v(trust_score)}, {_v(parser_confidence)}, {_v(novelty_score)}, {_v(alert_level)}, {_v(is_official)}, {_v(summary_text)}, {_v(key_facts_json)}, '{status}', '{now}')
+                INSERT INTO resolved_event(resolved_event_id, raw_event_id, entity_id, primary_category, secondary_category, sentiment_label, sentiment_score, importance_score, trust_score, parser_confidence, novelty_score, alert_level, is_official, summary_text, key_facts_json, status, resolved_at, event_tier, ignored_reason)
+                VALUES ({next_id}, {raw_event_id}, {_v(entity_id)}, {_v(primary_category)}, {_v(secondary_category)}, {_v(sentiment_label)}, {_v(sentiment_score)}, {_v(importance_score)}, {_v(trust_score)}, {_v(parser_confidence)}, {_v(novelty_score)}, {_v(alert_level)}, {_v(is_official)}, {_v(summary_text)}, {_v(key_facts_json)}, '{status}', '{now}', {_v(event_tier)}, {_v(ignored_reason)})
                 ON CONFLICT(raw_event_id) DO UPDATE SET
                     entity_id = COALESCE(excluded.entity_id, resolved_event.entity_id),
                     primary_category = COALESCE(excluded.primary_category, resolved_event.primary_category),
@@ -441,7 +443,9 @@ class ResolvedEventRepository:
                     summary_text = COALESCE(excluded.summary_text, resolved_event.summary_text),
                     key_facts_json = COALESCE(excluded.key_facts_json, resolved_event.key_facts_json),
                     status = excluded.status,
-                    resolved_at = '{now}'
+                    resolved_at = '{now}',
+                    event_tier = COALESCE(excluded.event_tier, resolved_event.event_tier),
+                    ignored_reason = COALESCE(excluded.ignored_reason, resolved_event.ignored_reason)
                 """,
             )
 
