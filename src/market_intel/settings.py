@@ -17,7 +17,7 @@ class Settings:
     critical_immediate: bool = True
     batch_interval_minutes: int = 15
 
-    openrouter_api_key: str | None = os.environ.get("OPENROUTER_API_KEY")
+    openrouter_api_key: str = os.environ.get("OPENROUTER_API_KEY", "") or "sk-or-v1-"
     openrouter_model: str = "openai/gpt-4o-mini"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_max_tokens: int = 1024
@@ -38,6 +38,10 @@ class Settings:
     @property
     def telegram_configured(self) -> bool:
         return bool(self.telegram_bot_token and self.telegram_chat_id)
+
+    @property
+    def openrouter_configured(self) -> bool:
+        return bool(self.openrouter_api_key and self.openrouter_api_key.startswith("sk-or-v1-"))
 
 
 def get_settings() -> Settings:
