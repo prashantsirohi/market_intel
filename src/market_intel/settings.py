@@ -18,14 +18,14 @@ class Settings:
     db_path: str = "./data/market_intel.duckdb"
     data_dir: str = "./data"
 
-    telegram_bot_token: str | None = None
-    telegram_chat_id: str | None = None
+    telegram_bot_token: str | None = os.environ.get("TELEGRAM_BOT_TOKEN")
+    telegram_chat_id: str | None = os.environ.get("TELEGRAM_CHAT_ID")
 
     alerts_enabled: bool = os.environ.get("ALERTS_ENABLED", "1").lower() in ("1", "true", "yes")
     critical_immediate: bool = True
     batch_interval_minutes: int = 15
 
-    openrouter_api_key: str = ""
+    openrouter_api_key: str | None = os.environ.get("OPENROUTER_API_KEY")
     openrouter_model: str = "openrouter/free"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_max_tokens: int = 1024
