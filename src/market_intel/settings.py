@@ -4,20 +4,28 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+env_path = Path(__file__).parent / ".env"
+if env_path.exists():
+    for line in env_path.read_text().strip().splitlines():
+        if "=" in line:
+            key, val = line.split("=", 1)
+            if key and val:
+                os.environ.setdefault(key, val)
+
 
 @dataclass
 class Settings:
     db_path: str = "./data/market_intel.duckdb"
     data_dir: str = "./data"
 
-    telegram_bot_token: str = os.environ.get("TELEGRAM_BOT_TOKEN") or "8624342423:AAHhfybomXMcDXKZQ06HfPUspeEc6gsaMpk"
-    telegram_chat_id: str  = os.environ.get("TELEGRAM_CHAT_ID") or "1282288492"
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
 
     alerts_enabled: bool = os.environ.get("ALERTS_ENABLED", "1").lower() in ("1", "true", "yes")
     critical_immediate: bool = True
     batch_interval_minutes: int = 15
 
-    openrouter_api_key: str = os.environ.get("OPENROUTER_API_KEY", "") or "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"
+    openrouter_api_key: str = ""
     openrouter_model: str = "openrouter/free"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_max_tokens: int = 1024
