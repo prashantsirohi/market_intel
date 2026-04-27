@@ -148,6 +148,29 @@ class AlertLog:
     payload_json: Optional[str] = None
 
 
+@dataclass
+class LlmInsight:
+    insight_id: Optional[int] = None
+    raw_event_id: int = 0
+    document_id: Optional[int] = None
+    model_used: str = ""
+    provider: str = ""
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+    insight_json: str = "{}"
+    created_at: Optional[datetime] = None
+
+
+@dataclass
+class SchedulerState:
+    state_id: Optional[int] = None
+    last_heartbeat: Optional[datetime] = None
+    last_cycle_at: Optional[datetime] = None
+    cycle_stats_json: Optional[str] = None
+    error_count: int = 0
+    created_at: Optional[datetime] = None
+
+
 class TrackedEntityRepository:
     def __init__(self, db: Database):
         self.db = db
@@ -586,3 +609,66 @@ class AlertLogRepository:
             sent_at=_dt(row[4]),
             payload_json=row[5],
         )
+
+
+class LlmInsightRepository:
+    def __init__(self, db: Database):
+        self.db = db
+
+    def upsert(self, raw_event_id: int, insight: dict) -> int:
+        with self.db.get_connection() as conn:
+            insight_json = json.dumps(insight, ensure_ascii=False)
+            max_result = conn.execute("SELECT COALESCE(MAX(insight_id), 0) FROM llm_insight").fetchone()
+            next_id = (max_result[0] if max_result[0] else 0) + 1
+            conn.execute(
+                """
+                INSERT INTO llm_insight(insight_id, raw_event_id, document_id, model_used, provider, prompt_tokens, completion_tokens, insight_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(raw_event_id) DO UPDATE SET
+                    document_id = excluded.document_id,
+                    model_used = excluded.model_used,
+                    provider = excluded.provider,
+                    prompt_tokens = excluded.prompt_tokens,
+                    completion_tokens = excluded.completion_tokens,
+                    insight_json = excluded.insight_json
+                """,
+                [next_id, raw_event_id, insight.get("document_id"), insight.get("model_used", ""), insight.get("provider", ""), insight.get("prompt_tokens", 0), insight.get("completion_tokens", 0), insight_json],
+            )
+            return next_id
+
+    def get_by_raw_event(self, raw_event_id: int) -> dict | None:
+        with self.db.get_connection(read_only=True) as conn:
+            row = conn.execute("SELECT * FROM llm_insight WHERE raw_event_id = ?", [raw_event_id]).fetchone()
+            if not row:
+                return None
+            return json.loads(row[7]) if row[7] else {}
+
+
+class SchedulerStateRepository:
+    def __init__(self, db: Database):
+        self.db = db
+
+    def get_or_create(self) -> dict:
+        with self.db.get_connection() as conn:
+            row = conn.execute("SELECT * FROM scheduler_state ORDER BY state_id DESC LIMIT 1").fetchone()
+            if not row:
+                conn.execute("INSERT INTO scheduler_state(state_id) VALUES (1)")
+                return {"last_heartbeat": None, "last_cycle_at": None, "error_count": 0}
+            return {
+                "last_heartbeat": _dt(row[1]),
+                "last_cycle_at": _dt(row[2]),
+                "cycle_stats_json": row[3],
+                "error_count": row[4],
+            }
+
+    def update_heartbeat(self, stats: dict | None = None) -> None:
+        with self.db.get_connection() as conn:
+            stats_json = json.dumps(stats) if stats else None
+            conn.execute(
+                "UPDATE scheduler_state SET last_heartbeat = CURRENT_TIMESTAMP, last_cycle_at = CURRENT_TIMESTAMP, cycle_stats_json = ? WHERE state_id = 1",
+                [stats_json],
+            )
+
+    def increment_error(self) -> None:
+        with self.db.get_connection() as conn:
+            conn.execute("UPDATE scheduler_state SET error_count = error_count + 1 WHERE state_id = 1")
