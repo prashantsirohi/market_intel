@@ -5,25 +5,69 @@ from market_intel.processing.trust import compute_trust_score, is_official_sourc
 
 
 def classify_category(raw_event: dict) -> str:
-    text = f"{raw_event.get('title', '')} {raw_event.get('description', '')}".lower()
-    if any(k in text for k in ["resignation", "appoint", "director", "ceo", "managing director"]):
-        return "management_change"
-    if any(k in text for k in ["sebi", "nclt", "penalty", "litigation", "tax demand"]):
-        return "regulatory_legal"
-    if any(k in text for k in ["buyback", "repurchase"]):
-        return "buyback"
-    if any(k in text for k in ["order", "contract awarded", "l1 bidder"]):
-        return "major_order_win"
-    if any(k in text for k in ["capex", "expansion", "new plant", "capacity expansion"]):
-        return "capex_expansion"
-    if "board meeting" in text:
+    title = (raw_event.get("title") or "")
+    desc = (raw_event.get("description") or "").lower()
+    
+    # Extract event type from NSE format: "...|SUBJECT: Board Meeting Intimation"
+    event_type = ""
+    if "|" in desc:
+        event_type = desc.split("|")[-1].strip()
+    
+    # === PRIORITY 1: Most common (225 NAV declarations) ===
+    if "declaration of nav" in event_type:
+        return "mutual_fund_nav"
+    if title and ("Mutual Fund" in title or " ETF" in title):
+        if "nav" in desc:
+            return "mutual_fund_nav"
+    
+    # === PRIORITY 2: Board meetings ===
+    if "board meeting" in event_type:
+        if "intimation" in event_type or "schedule" in event_type:
+            return "board_meeting_intimation"
+        if "outcome" in event_type:
+            return "board_meeting_outcome"
         return "board_meeting"
-    if any(k in text for k in ["results", "financial results", "quarterly results"]):
-        return "results"
-    if "dividend" in text:
+    
+    # === PRIORITY 3: Management changes ===
+    if "cessation" in event_type or "demise" in event_type:
+        return "management_change"
+    if "change in directors" in event_type or "change in kmp" in event_type or "change in smp" in event_type:
+        return "management_change"
+    
+    # === PRIORITY 4: Other event types ===
+    if any(k in event_type for k in ["buyback", "repurchase"]):
+        return "buyback"
+    if any(k in event_type for k in ["dividend", "record date"]):
         return "dividend"
-    if any(k in text for k in ["rights issue", "qip", "preferential allotment"]):
+    if any(k in event_type for k in ["rights issue", "qip", "preferential allotment", "bonus issue"]):
         return "fundraise"
+    if any(k in event_type for k in ["esop", "esos", "esps"]):
+        return "esop_allotment"
+    if "allotment" in event_type:
+        return "share_allotment"
+    if any(k in event_type for k in ["bagging", "award", "loa"]):
+        return "major_order_win"
+    if any(k in event_type for k in ["result", "quarterly", "annual", "financial", "unaudited"]):
+        return "results"
+    if "deviation" in event_type or "variation" in event_type:
+        return "deviation_statement"
+    if any(k in event_type for k in ["sebi", "takeover", "regulation 51", "disclosure under"]):
+        return "regulatory"
+    
+    # === PRIORITY 5: General ===
+    if "press release" in event_type:
+        return "press_release"
+    if "analyst" in event_type or "investor meet" in event_type:
+        return "investor_meet"
+    if "shareholders meeting" in event_type:
+        return "shareholders_meeting"
+    if "newspaper publication" in event_type:
+        return "newspaper_publication"
+    if "price movement" in event_type:
+        return "price_movement"
+    if "agreements" in event_type:
+        return "agreements"
+    
     return "general"
 
 

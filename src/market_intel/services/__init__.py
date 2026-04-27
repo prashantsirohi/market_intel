@@ -1,21 +1,21 @@
-from market_intel.services.event_processor import (
-    EventProcessor,
-    CollectionService,
-    ProcessingResult,
+from market_intel.services.event_analysis_service import (
+    EventAnalysisService,
+    classify_category,
+    compute_importance,
+    classify_sentiment,
 )
-from market_intel.services.telegram_alerts import (
-    TelegramAlerter,
-    TelegramAlertError,
-    AlertScheduler,
-    AlertMessage,
+from market_intel.services.event_ingest_service import (
+    EventIngestService,
+)
+from market_intel.services.alert_service import (
+    AlertService,
 )
 
 __all__ = [
-    "EventProcessor",
-    "CollectionService",
-    "ProcessingResult",
-    "TelegramAlerter",
-    "TelegramAlertError",
-    "AlertScheduler",
-    "AlertMessage",
+    "EventAnalysisService",
+    "classify_category",
+    "compute_importance",
+    "classify_sentiment",
+    "EventIngestService",
+    "AlertService",
 ]

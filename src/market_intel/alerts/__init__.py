@@ -1,13 +1,15 @@
-from market_intel.services.telegram_alerts import (
-    TelegramAlerter,
-    TelegramAlertError,
-    AlertScheduler,
-    AlertMessage,
+from market_intel.alerts.telegram import (
+    TelegramAlert,
+)
+from market_intel.alerts.rules import (
+    decide_alert_level,
+    CRITICAL_CATEGORIES,
+    IMPORTANT_CATEGORIES,
 )
 
 __all__ = [
-    "TelegramAlerter",
-    "TelegramAlertError",
-    "AlertScheduler",
-    "AlertMessage",
+    "TelegramAlert",
+    "decide_alert_level",
+    "CRITICAL_CATEGORIES",
+    "IMPORTANT_CATEGORIES",
 ]
