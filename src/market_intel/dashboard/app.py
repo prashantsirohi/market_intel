@@ -7,6 +7,9 @@ import streamlit as st
 
 DEFAULT_DB = "./data/market_intel.duckdb"
 
+IGNORE_CATS = {"nav_update", "newspaper_publication", "investor_meet", "agm_notice", 
+             "compliance_certificate", "loss_of_certificate", "analyst_call"}
+
 
 @st.cache_data(ttl=60)
 def load_raw_events(db_path: str) -> pd.DataFrame:
@@ -15,7 +18,11 @@ def load_raw_events(db_path: str) -> pd.DataFrame:
 
     conn = duckdb.connect(db_path, read_only=True)
     try:
-        return conn.execute(
+        tables = [t[0] for t in conn.execute("SHOW TABLES").fetchall()]
+        if "raw_events" not in tables:
+            return pd.DataFrame()
+            
+        df = conn.execute(
             """
             SELECT
                 id,
@@ -32,6 +39,7 @@ def load_raw_events(db_path: str) -> pd.DataFrame:
             LIMIT 1000
             """
         ).fetchdf()
+        return df
     finally:
         conn.close()
 
@@ -43,6 +51,10 @@ def load_alerts(db_path: str) -> pd.DataFrame:
 
     conn = duckdb.connect(db_path, read_only=True)
     try:
+        tables = [t[0] for t in conn.execute("SHOW TABLES").fetchall()]
+        if "alert_log" not in tables:
+            return pd.DataFrame()
+            
         return conn.execute(
             """
             SELECT
@@ -78,7 +90,7 @@ def main():
 
     show_ignored = st.sidebar.checkbox("Show ignored events", value=False)
     if not show_ignored:
-        events = events[events["alert_level"] != "ignore"]
+        events = events[~events["category"].isin(IGNORE_CATS)]
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs(
         ["Overview", "Event Feed", "Alerts", "Stock View", "Sector View"]
@@ -87,8 +99,8 @@ def main():
     with tab1:
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Total Events", len(events))
-        c2.metric("Critical", int((events["importance"] >= 8.5).sum()))
-        c3.metric("Important", int((events["importance"] >= 7.0).sum()))
+        c2.metric("High Imp (>=8.5)", int((events["importance"] >= 8.5).sum()))
+        c3.metric("Med Imp (>=7)", int((events["importance"] >= 7.0).sum()))
         c4.metric("Symbols", events["symbol"].nunique())
 
         col1, col2 = st.columns(2)
@@ -110,8 +122,9 @@ def main():
 
         col1, col2, col3 = st.columns(3)
         all_categories = sorted([x for x in events["category"].dropna().unique() if x])
-        if "mutual_fund_nav" in all_categories:
-            all_categories.remove("mutual_fund_nav")
+        for c in list(all_categories):
+            if c in IGNORE_CATS:
+                all_categories.remove(c)
         categories = ["All"] + all_categories
         levels = ["All", "High (>=7)", "Medium (5-7)", "Low (<5)"]
 
@@ -166,8 +179,8 @@ def main():
 
             c1, c2, c3 = st.columns(3)
             c1.metric("Events", len(stock_df))
-            c2.metric("Critical", int((stock_df["importance"] >= 8.5).sum()))
-            c3.metric("Important", int((stock_df["importance"] >= 7).sum()))
+            c2.metric("High Imp", int((stock_df["importance"] >= 8.5).sum()))
+            c3.metric("Medium Imp", int((stock_df["importance"] >= 7).sum()))
 
             st.dataframe(
                 stock_df[["id", "category", "importance", "sentiment", "title"]],
@@ -177,13 +190,12 @@ def main():
 
     with tab5:
         st.subheader("Sector View")
-        filtered_events = events[events["category"] != "mutual_fund_nav"]
-        sector_counts = filtered_events["category"].value_counts().reset_index()
+        sector_counts = events["category"].value_counts().reset_index()
         sector_counts.columns = ["category", "count"]
         st.dataframe(sector_counts, use_container_width=True, hide_index=True)
 
-        st.subheader("Positive vs Negative Events")
-        sentiment_counts = filtered_events["sentiment"].value_counts()
+        st.subheader("Sentiment Distribution")
+        sentiment_counts = events["sentiment"].value_counts()
         st.bar_chart(sentiment_counts)
 
 
