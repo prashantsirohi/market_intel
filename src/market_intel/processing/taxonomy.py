@@ -31,6 +31,17 @@ IGNORE_CATEGORIES = {
     "analyst_call",
 }
 
+PDF_LLM_CATEGORIES = {
+    "results",
+    "management_change",
+    "regulatory_legal",
+    "buyback",
+    "major_order_win",
+    "capex_expansion",
+    "fundraise",
+    "mna_partnership",
+}
+
 CATEGORY_IMPORTANCE = {
     "management_change": 9.0,
     "regulatory_legal": 9.5,
@@ -96,12 +107,13 @@ KEYWORDS = {
     "fundraise": [
         "qip", "qualified institutional placement", "rights issue",
         "preferential allotment", "fund raising", "fundraise",
-        "ncd", "debenture", "warrants", "bonus issue"
+        "ncd", "debenture", "warrants", "bonus issue", "esop", "esos", "esps",
+        "allotment of shares", "allotment"
     ],
     "mna_partnership": [
         "acquisition", "merger", "amalgamation", "joint venture",
         "strategic partnership", "mou", "memorandum of understanding",
-        "stake acquisition"
+        "stake acquisition", "agreement"
     ],
     "credit_rating": [
         "credit rating", "rating upgrade", "rating downgrade",
@@ -120,7 +132,7 @@ KEYWORDS = {
     ],
     "compliance_certificate": [
         "compliance certificate", "certificate under regulation",
-        "secretarial compliance"
+        "secretarial compliance", "deviation", "variation"
     ],
     "loss_of_certificate": [
         "loss of share certificate", "duplicate share certificate"
@@ -147,3 +159,7 @@ def category_importance(category: str) -> float:
 
 def is_ignored(category: str) -> bool:
     return category in IGNORE_CATEGORIES
+
+
+def needs_pdf_llm(category: str) -> bool:
+    return category in PDF_LLM_CATEGORIES

@@ -2,10 +2,24 @@ import re
 
 from market_intel.processing.taxonomy import (
     KEYWORDS,
+    CATEGORY_IMPORTANCE,
     category_importance,
     category_tier,
     is_ignored,
 )
+
+
+CATEGORY_MAP = {
+    "board_meeting_outcome": "board_meeting",
+    "board_meeting_intimation": "board_meeting",
+    "deviation_statement": "compliance_certificate",
+    "esop_allotment": "fundraise",
+    "share_allotment": "fundraise",
+    "price_movement": "clarification",
+    "agreements": "mna_partnership",
+    "press_release": "clarification",
+    "shareholders_meeting": "agm_notice",
+}
 
 
 def normalize_text(text: str) -> str:
@@ -44,16 +58,17 @@ def classify_category(title: str, description: str | None = None) -> str:
     for category in priority:
         for keyword in KEYWORDS.get(category, []):
             if keyword in text:
-                return category
+                return CATEGORY_MAP.get(category, category)
 
-    return "general"
+    return "clarification"
 
 
 def classify_event(title: str, description: str | None = None) -> dict:
-    category = classify_category(title, description)
+    raw_category = classify_category(title, description)
+    
     return {
-        "primary_category": category,
-        "event_tier": category_tier(category),
-        "importance_score": category_importance(category),
-        "is_ignored": is_ignored(category),
+        "primary_category": raw_category,
+        "event_tier": category_tier(raw_category),
+        "importance_score": category_importance(raw_category),
+        "is_ignored": is_ignored(raw_category),
     }
