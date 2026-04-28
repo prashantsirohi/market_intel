@@ -237,3 +237,28 @@ Return ONLY the JSON, no other text."""
                 one_line_summary=fallback_title[:120],
                 model_used=self.model,
             )
+
+
+def recalculate_importance(insight: InsightPayload, base_importance: float) -> float:
+    score = base_importance
+
+    if insight.pat_yoy_pct:
+        if abs(insight.pat_yoy_pct) > 25:
+            score += 1.5
+        elif abs(insight.pat_yoy_pct) > 10:
+            score += 0.5
+
+    if insight.management_guidance:
+        score += 0.5
+
+    if insight.risk_flags:
+        score += 0.5 * min(len(insight.risk_flags), 3)
+
+    if insight.revenue_yoy_pct:
+        if insight.revenue_yoy_pct > 20 or insight.revenue_yoy_pct < -20:
+            score += 0.5
+
+    if insight.buyback_size_cr:
+        score += 1.0
+
+    return min(score, 10.0)
