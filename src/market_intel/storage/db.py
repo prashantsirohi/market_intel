@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import duckdb
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from market_intel.storage.repositories import (
@@ -16,10 +20,13 @@ if TYPE_CHECKING:
 
 
 class Database:
+    _instance_lock = threading.Lock()
+    _connection: duckdb.DuckDBPyConnection | None = None
+    
     def __init__(self, db_path: str = "./data/market_intel.duckdb", fresh: bool = False):
         self.db_path = db_path
-        self._connection: duckdb.DuckDBPyConnection | None = None
         self._repos: dict[str, object] = {}
+        self._write_lock = threading.Lock()
         if db_path == ":memory:":
             self._connection = duckdb.connect(db_path)
             self._init_schema()
@@ -33,7 +40,13 @@ class Database:
     def _connect(self, read_only: bool = False) -> duckdb.DuckDBPyConnection:
         if self._connection is not None:
             return self._connection
-        return duckdb.connect(self.db_path, read_only=read_only)
+        with self._write_lock:
+            if self._connection is not None:
+                return self._connection
+            conn = duckdb.connect(self.db_path, read_only=read_only)
+            if not read_only:
+                self._connection = conn
+            return conn
 
     def _init_schema(self) -> None:
         import market_intel
@@ -59,7 +72,7 @@ class Database:
         try:
             yield conn
         finally:
-            if self._connection is None:
+            if read_only and self._connection is None:
                 conn.close()
 
     def tracked_entity_repo(self) -> TrackedEntityRepository:

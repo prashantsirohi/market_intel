@@ -7,6 +7,7 @@ from market_intel.processing.taxonomy import (
     category_tier,
     is_ignored,
 )
+from market_intel.processing.utils import normalize_text
 
 
 CATEGORY_MAP = {
@@ -22,36 +23,33 @@ CATEGORY_MAP = {
 }
 
 
-def normalize_text(text: str) -> str:
-    text = (text or "").lower()
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
+from market_intel.processing.utils import normalize_text
 
 
 def classify_category(title: str, description: str | None = None) -> str:
     text = normalize_text(f"{title or ''} {description or ''}")
 
     priority = [
-        "nav_update",
-        "loss_of_certificate",
-        "compliance_certificate",
-        "newspaper_publication",
-        "investor_meet",
-        "agm_notice",
-        "analyst_call",
-        "regulatory_legal",
-        "promoter_activity",
+        "results",
         "management_change",
         "buyback",
         "major_order_win",
         "capex_expansion",
         "fundraise",
-        "mna_partnership",
-        "results",
-        "board_meeting",
         "dividend",
+        "board_meeting",
+        "mna_partnership",
+        "regulatory_legal",
+        "compliance_certificate",
         "credit_rating",
+        "promoter_activity",
+        "loss_of_certificate",
         "guidance",
+        "analyst_call",
+        "investor_meet",
+        "agm_notice",
+        "newspaper_publication",
+        "nav_update",
         "clarification",
     ]
 

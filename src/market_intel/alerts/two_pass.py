@@ -33,6 +33,7 @@ class AlertPayload:
     
     summary: str = ""
     
+    attachment_url: str = ""
     pdf_local_path: str | None = None
     pdf_status: str = "pending"
     
@@ -48,7 +49,7 @@ class AlertPayload:
     def to_telegram_text(self) -> str:
         tier_emoji = {"A": "🔴", "B": "🟠", "C": "🟡", "GENERAL": "⚪", "IGNORE": "❌"}
         
-        header = f"{tier_emoji.get(self.tier, '⚪')} *{self.alert_level.upper()}*"
+        header = f"{tier_emoji.get(self.tier, '⚪')} <b>{self.alert_level.upper()}</b>"
         
         if self.symbol:
             header += f" | {self.symbol}"
@@ -59,9 +60,9 @@ class AlertPayload:
             body += f"\n📎 PDF attached"
         
         if self.llm_enriched and self.llm_summary:
-            body += f"\n\n💡 *LLM Insight:*\n{self.llm_summary[:300]}"
+            body += f"\n\n💡 <b>LLM Insight:</b>\n{self.llm_summary[:300]}"
         
-        footer = f"\n\n_imp:{self.importance_score}_ | _trust:{self.trust_score}_"
+        footer = f"\n\n_imp:{self.importance_score}_ | trust:{self.trust_score}_"
         
         return header + body + footer
     
@@ -71,7 +72,7 @@ class AlertPayload:
         
         tier_emoji = {"A": "🔴", "B": "🟠", "C": "🟡"}
         
-        header = f"{tier_emoji.get(self.tier, '⚪')} *ENRICHED* | {self.symbol or 'N/A'}"
+        header = f"{tier_emoji.get(self.tier, '⚪')} <b>ENRICHED</b> | {self.symbol or 'N/A'}"
         header += f"\n_imp: {self.final_importance_score or self.importance_score}_"
         
         body = f"\n{self.llm_summary[:500]}"
@@ -103,6 +104,7 @@ class TwoPassAlerter:
             raw_event_id=resolved_event.get("raw_event_id", 0),
             symbol=raw_event.get("symbol"),
             title=raw_event.get("title", ""),
+            attachment_url=raw_event.get("attachment_url", ""),
             category=category,
             tier=resolved_event.get("event_tier", "GENERAL"),
             importance_score=resolved_event.get("importance_score", 5.0),
@@ -157,13 +159,11 @@ class TwoPassAlerter:
         
         for payload in batch:
             try:
-                if payload.pdf_status == "needs_download" and self.pdf_fetcher:
-                    result = self.pdf_fetcher.fetch(
-                        raw_event.get("attachment_url", "")
-                    )
+                if payload.pdf_status == "pending" and self.pdf_fetcher and payload.attachment_url:
+                    result = self.pdf_fetcher.fetch(payload.attachment_url)
                     if result.status == "ok":
                         payload.pdf_local_path = result.local_path
-                        payload.pdf_status = "ok"
+                        payload.pdf_status = "downloaded"
                         stats["pdf_downloaded"] += 1
                 
                 if self.llm_analyser and payload.pdf_local_path:

@@ -28,11 +28,13 @@ def load_raw_events(db_path: str) -> pd.DataFrame:
                 id,
                 title,
                 symbol,
+                company_name,
                 category,
                 importance,
                 sentiment,
                 link,
                 pub_date,
+                event_date,
                 description
             FROM raw_events
             ORDER BY id DESC
@@ -109,13 +111,13 @@ def main():
             st.subheader("Events by Category")
             cat_counts = events["category"].value_counts().reset_index()
             cat_counts.columns = ["category", "count"]
-            st.dataframe(cat_counts, use_container_width=True, hide_index=True)
+            st.dataframe(cat_counts, True, hide_index=True)
 
         with col2:
             st.subheader("Events by Importance")
             imp_counts = events["importance"].value_counts(bins=[0, 5, 7, 8.5, 10], sort=False).reset_index()
             imp_counts.columns = ["importance", "count"]
-            st.dataframe(imp_counts, use_container_width=True, hide_index=True)
+            st.dataframe(imp_counts, True, hide_index=True)
 
     with tab2:
         st.subheader("Event Feed")
@@ -145,8 +147,7 @@ def main():
             filtered = filtered[filtered["category"] == category]
 
         st.dataframe(
-            filtered[["id", "symbol", "category", "importance", "sentiment", "title"]],
-            use_container_width=True,
+            filtered[["id", "symbol", "company_name", "category", "importance", "sentiment", "event_date", "title", "link"]],
             hide_index=True,
         )
 
@@ -163,7 +164,7 @@ def main():
 
             st.dataframe(
                 alerts[["sent_at", "channel", "alert_status", "resolved_event_id", "error_message"]],
-                use_container_width=True,
+                True,
                 hide_index=True,
             )
 
@@ -183,8 +184,7 @@ def main():
             c3.metric("Medium Imp", int((stock_df["importance"] >= 7).sum()))
 
             st.dataframe(
-                stock_df[["id", "category", "importance", "sentiment", "title"]],
-                use_container_width=True,
+                stock_df[["id", "category", "importance", "sentiment", "event_date", "title", "link"]],
                 hide_index=True,
             )
 
@@ -192,7 +192,7 @@ def main():
         st.subheader("Sector View")
         sector_counts = events["category"].value_counts().reset_index()
         sector_counts.columns = ["category", "count"]
-        st.dataframe(sector_counts, use_container_width=True, hide_index=True)
+        st.dataframe(sector_counts, True, hide_index=True)
 
         st.subheader("Sentiment Distribution")
         sentiment_counts = events["sentiment"].value_counts()

@@ -145,12 +145,11 @@ class BackfillRunner:
     def run(
         self,
         collect_func: Callable[[int, int], int],
-        since_days: Optional[int] = None,
+        batch_size: Optional[int] = None,
     ) -> int:
-        since = since_days or self.max_days_back
-        since_date = datetime.now() - timedelta(days=since)
+        batch_size = batch_size or self.batch_size
         
-        logger.info(f"Starting backfill from {since_date.isoformat()}, batch_size={self.batch_size}")
+        logger.info(f"Starting backfill, batch_size={batch_size}")
         
         total_processed = 0
         start_offset = 0
@@ -164,9 +163,6 @@ class BackfillRunner:
                 break
             
             start_offset += self.batch_size
-            
-            if start_offset >= since * 24:
-                break
         
         logger.info(f"Backfill complete: {total_processed} total items")
         return total_processed

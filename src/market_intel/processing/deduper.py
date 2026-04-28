@@ -1,16 +1,8 @@
 from __future__ import annotations
 
 import hashlib
-import re
 
-
-def normalize_text(text: str | None) -> str:
-    if not text:
-        return ""
-    value = text.lower()
-    value = re.sub(r"\s+", " ", value)
-    value = re.sub(r"[^\w\s]", "", value)
-    return value.strip()
+from market_intel.processing.utils import normalize_text_for_hash
 
 
 def build_event_hash(
@@ -26,7 +18,7 @@ def build_event_hash(
         [
             source or "",
             symbol or "",
-            normalize_text(title),
+            normalize_text_for_hash(title),
             event_date or "",
             attachment_url or "",
             external_id or "",

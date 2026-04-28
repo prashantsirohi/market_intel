@@ -8,9 +8,13 @@ class TelegramAlert:
         self.token = token
         self.chat_id = chat_id
 
-    def send(self, message: str) -> int:
+    def send(self, message: str, parse_mode: str = "HTML") -> int:
         url = f"https://api.telegram.org/bot{self.token}/sendMessage"
-        payload = {"chat_id": self.chat_id, "text": message}
+        payload = {
+            "chat_id": self.chat_id,
+            "text": message,
+            "parse_mode": parse_mode,
+        }
         resp = requests.post(url, json=payload, timeout=20)
         resp.raise_for_status()
         return resp.status_code
