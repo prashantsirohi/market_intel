@@ -64,7 +64,12 @@ class Database:
         try:
             conn.execute(schema_sql)
         finally:
+            # Drop the cached writable connection so that a subsequent
+            # get_connection(read_only=True) call can open a fresh handle.
+            # Previously this closed the conn but left self._connection
+            # pointing at the closed handle, causing "Connection already closed".
             conn.close()
+            self._connection = None
 
     @contextmanager
     def get_connection(self, read_only: bool = False):

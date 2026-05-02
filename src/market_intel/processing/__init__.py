@@ -1,4 +1,5 @@
-from .deduper import build_event_hash, normalize_text
+from .deduper import build_event_hash
+from .utils import normalize_text
 from .trust import compute_trust_score, is_official_source
 from .entity_resolver import EntityResolver
 from .llm_analyser import LlmAnalyser, InsightPayload, recalculate_importance

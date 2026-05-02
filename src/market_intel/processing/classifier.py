@@ -30,6 +30,7 @@ def classify_category(title: str, description: str | None = None) -> str:
     text = normalize_text(f"{title or ''} {description or ''}")
 
     priority = [
+        "demerger",
         "results",
         "management_change",
         "buyback",
@@ -38,6 +39,14 @@ def classify_category(title: str, description: str | None = None) -> str:
         "fundraise",
         "dividend",
         "board_meeting",
+        "sast_filing",
+        "rating_downgrade",
+        "rating_upgrade",
+        "rating_reaffirmed",
+        "block_deal",
+        "bulk_deal",
+        "insider_sell",
+        "insider_buy",
         "mna_partnership",
         "regulatory_legal",
         "compliance_certificate",

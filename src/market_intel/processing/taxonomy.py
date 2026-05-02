@@ -5,6 +5,10 @@ TIER_A = {
     "capex_expansion",
     "buyback",
     "promoter_activity",
+    "demerger",
+    "block_deal",
+    "sast_filing",
+    "rating_downgrade",
 }
 
 TIER_B = {
@@ -13,12 +17,17 @@ TIER_B = {
     "dividend",
     "fundraise",
     "mna_partnership",
+    "bulk_deal",
+    "insider_buy",
+    "insider_sell",
+    "rating_upgrade",
 }
 
 TIER_C = {
     "credit_rating",
     "guidance",
     "clarification",
+    "rating_reaffirmed",
 }
 
 IGNORE_CATEGORIES = {
@@ -57,6 +66,15 @@ CATEGORY_IMPORTANCE = {
     "credit_rating": 6.5,
     "guidance": 7.0,
     "clarification": 6.0,
+    "demerger": 9.3,
+    "bulk_deal": 7.8,
+    "block_deal": 8.5,
+    "sast_filing": 8.7,
+    "insider_buy": 7.5,
+    "insider_sell": 7.0,
+    "rating_upgrade": 7.5,
+    "rating_downgrade": 8.5,
+    "rating_reaffirmed": 5.5,
     "nav_update": 2.0,
     "newspaper_publication": 2.0,
     "investor_meet": 2.0,
@@ -115,6 +133,27 @@ KEYWORDS = {
         "strategic partnership", "mou", "memorandum of understanding",
         "stake acquisition", "agreement"
     ],
+    "demerger": [
+        "demerger", "scheme of arrangement", "spin-off", "spinoff",
+        "hive off", "hive-off", "vertical split", "horizontal split",
+        "scheme of demerger"
+    ],
+    "bulk_deal": ["bulk deal", "bulk window"],
+    "block_deal": ["block deal", "block window"],
+    "sast_filing": [
+        "sast", "regulation 29", "reg 29", "substantial acquisition",
+        "takeover regulations", "open offer"
+    ],
+    "insider_buy": [
+        "regulation 7(2)", "reg 7(2)", "sast/pit", "insider trading",
+        "designated person", "promoter group acquisition"
+    ],
+    "insider_sell": [
+        "designated person sell", "insider sale", "promoter sale disclosure"
+    ],
+    "rating_upgrade": ["rating upgrade", "upgraded to"],
+    "rating_downgrade": ["rating downgrade", "downgraded to"],
+    "rating_reaffirmed": ["rating reaffirmed", "reaffirmed at"],
     "credit_rating": [
         "credit rating", "rating upgrade", "rating downgrade",
         "rating reaffirmed", "outlook revised"
