@@ -20,6 +20,8 @@ if TYPE_CHECKING:
         InsiderTradeRepository,
         RatingChangeRepository,
         SastFilingRepository,
+        LlmInsightRepository,
+        SchedulerStateRepository,
     )
 
 
@@ -153,6 +155,18 @@ class Database:
         if "sast_filing" not in self._repos:
             self._repos["sast_filing"] = SastFilingRepository(self)
         return self._repos["sast_filing"]
+
+    def llm_insight_repo(self) -> "LlmInsightRepository":
+        from market_intel.storage.repositories import LlmInsightRepository
+        if "llm_insight" not in self._repos:
+            self._repos["llm_insight"] = LlmInsightRepository(self)
+        return self._repos["llm_insight"]
+
+    def scheduler_state_repo(self) -> "SchedulerStateRepository":
+        from market_intel.storage.repositories import SchedulerStateRepository
+        if "scheduler_state" not in self._repos:
+            self._repos["scheduler_state"] = SchedulerStateRepository(self)
+        return self._repos["scheduler_state"]
 
     def close(self) -> None:
         if self._connection is not None:

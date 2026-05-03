@@ -262,6 +262,8 @@ def _extract_rss_symbol(title: str, description: str) -> str | None:
 def _route_rss_event(item: CollectorItem, ingest_svc: Any) -> dict:
     """Route an RSS/API corp-announcement item through EventIngestService."""
     record = {
+        "source": item.source,
+        "source_type": "official",
         "title": item.title,
         "link": item.link,
         "pub_date": item.published_at or item.event_date,

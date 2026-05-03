@@ -47,6 +47,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print alerts without sending to Telegram",
     )
+    parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help="Explicitly reset and recreate the DuckDB store before collection.",
+    )
     return parser.parse_args()
 
 
@@ -55,7 +60,7 @@ def main() -> int:
     Path("./data/cache").mkdir(parents=True, exist_ok=True)
     Path("./data/exports").mkdir(parents=True, exist_ok=True)
 
-    db = Database(args.db_path)
+    db = Database(args.db_path, fresh=bool(args.fresh))
     svc = CollectionService(db)
 
     sources: list[str] | None = None
@@ -80,9 +85,21 @@ def main() -> int:
             summary["failed"],
         )
         print(summary)
+        try:
+            state_repo = db.scheduler_state_repo()
+            state_repo.get_or_create()
+            state_repo.update_heartbeat(summary)
+        except Exception as exc:
+            logger.warning("Failed to update scheduler heartbeat: %s", exc)
         return 0
     except Exception as exc:
         logger.error("Collection run failed: %s", exc, exc_info=True)
+        try:
+            state_repo = db.scheduler_state_repo()
+            state_repo.get_or_create()
+            state_repo.increment_error()
+        except Exception:
+            pass
         return 1
     finally:
         db.close()

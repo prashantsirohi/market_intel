@@ -12,13 +12,21 @@ class EventIngestService:
 
     def process_rss_item(self, item: dict) -> dict:
         from market_intel.processing.deduper import build_event_hash as build_hash
+
+        source = item.get("source") or "nse"
+        source_type = item.get("source_type") or "official"
+        pub_date = item.get("pub_date")
+        if hasattr(pub_date, "isoformat"):
+            event_date_key = pub_date.isoformat()
+        else:
+            event_date_key = str(pub_date or "")
         
         try:
             event_hash = build_hash(
-                source="nse",
+                source=source,
                 symbol=item.get("symbol") or "",
                 title=item.get("title") or "",
-                event_date=str(item.get("pub_date") or ""),
+                event_date=event_date_key,
                 attachment_url=item.get("attachment_url"),
                 external_id=item.get("guid"),
             )
@@ -35,8 +43,8 @@ class EventIngestService:
         
         try:
             inserted = self.raw_repo.upsert_event(
-                source="nse",
-                source_type="official",
+                source=source,
+                source_type=source_type,
                 external_id=item.get("guid"),
                 symbol=item.get("symbol"),
                 title=item.get("title"),
@@ -62,10 +70,12 @@ class EventIngestService:
         
         try:
             raw_event = {
-                "source": "nse",
-                "source_type": "official",
+                "source": source,
+                "source_type": source_type,
                 "source_event_type": "rss_official",
                 "title": item.get("title"),
+                "description": item.get("description"),
+                "symbol": item.get("symbol"),
             }
             resolved = self.analysis_service.process_raw_event(raw_event, inserted.raw_event_id)
         except Exception as e:

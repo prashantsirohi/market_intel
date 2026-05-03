@@ -6,6 +6,8 @@ from typing import Any
 
 from market_intel.collectors.sast import (
     NseSastCollector,
+    SAST_API_URL,
+    SAST_PAGE_URL,
     parse_sast_rows,
 )
 
@@ -100,3 +102,9 @@ def test_collector_sends_date_range_params():
     assert params is not None
     assert "from_date" in params and "to_date" in params
     assert params["index"] == "equities"
+    assert http.calls[0][0] == SAST_API_URL
+
+
+def test_collector_uses_current_regulation_29_urls():
+    assert SAST_API_URL == "https://www.nseindia.com/api/corporate-sast-reg29"
+    assert SAST_PAGE_URL == "https://www.nseindia.com/companies-listing/corporate-filings-regulation-29"

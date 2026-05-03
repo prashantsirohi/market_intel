@@ -4,7 +4,7 @@ SEBI Regulation 29 (under the SAST Regulations, 2011) requires acquirers to
 disclose substantial acquisitions or disposals of shares to the exchange.
 NSE publishes these on a JSON-backed page:
 
-  https://www.nseindia.com/api/corporate-disclosure-sast?index=equities&from_date=...&to_date=...
+  https://www.nseindia.com/api/corporate-sast-reg29?index=equities&from_date=...&to_date=...
 
 Returns a list of acquirer-disclosure rows.
 """
@@ -26,10 +26,11 @@ from market_intel.collectors.http_utils import (
 logger = logging.getLogger(__name__)
 
 
-SAST_API_URL = "https://www.nseindia.com/api/corporate-disclosure-sast"
+SAST_PAGE_URL = "https://www.nseindia.com/companies-listing/corporate-filings-regulation-29"
+SAST_API_URL = "https://www.nseindia.com/api/corporate-sast-reg29"
 NSE_WARMUP_URLS = (
     "https://www.nseindia.com/",
-    "https://www.nseindia.com/companies-listing/corporate-filings-substantial-shareholding",
+    SAST_PAGE_URL,
 )
 
 
@@ -124,10 +125,7 @@ class NseSastCollector(BaseCollector):
             warmup_urls=NSE_WARMUP_URLS,
             extra_headers={
                 "Accept": "application/json,text/plain,*/*",
-                "Referer": (
-                    "https://www.nseindia.com/companies-listing/"
-                    "corporate-filings-substantial-shareholding"
-                ),
+                "Referer": SAST_PAGE_URL,
             },
         )
         self.lookback_days = lookback_days

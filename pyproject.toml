@@ -26,6 +26,7 @@ test = ["pytest>=8.0", "pytest-cov>=4.1"]
 
 [project.scripts]
 market-intel = "market_intel.cli.main:main"
+market-intel-llm-enrich = "market_intel.jobs.run_llm_enrich:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

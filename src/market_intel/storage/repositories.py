@@ -116,6 +116,7 @@ class RawEvent:
 class ResolvedEvent:
     resolved_event_id: Optional[int] = None
     raw_event_id: int = 0
+    insight_id: Optional[int] = None
     entity_id: Optional[int] = None
     primary_category: Optional[str] = None
     secondary_category: Optional[str] = None
@@ -132,6 +133,8 @@ class ResolvedEvent:
     status: str = "pending"
     resolved_at: Optional[datetime] = None
     acknowledged_at: Optional[datetime] = None
+    event_tier: Optional[str] = None
+    ignored_reason: Optional[str] = None
 
     def __post_init__(self):
         if self.key_facts is None:
@@ -299,16 +302,13 @@ class RawEventRepository:
                 f"SELECT * FROM raw_event WHERE event_hash = {_v(event_hash)}"
             ).fetchone()
             if existing:
-                conn.execute(
-                    f"UPDATE raw_event SET seen_count = seen_count + 1, ingested_at = CURRENT_TIMESTAMP WHERE event_hash = {_v(event_hash)}"
-                )
-                # Re-fetch AFTER the update so seen_count reflects the new value.
-                # The pre-update snapshot always had seen_count=1, causing
-                # process_rss_item to treat every re-seen event as new.
-                updated = conn.execute(
-                    "SELECT * FROM raw_event WHERE event_hash = ?", [event_hash]
-                ).fetchone()
-                return self._row_to_event(updated)
+                # DuckDB can raise duplicate-key errors when UPDATE rewrites rows
+                # in tables with primary-key indexes. For dedupe purposes the
+                # stable event_hash is enough; avoid mutating existing rows.
+                event = self._row_to_event(existing)
+                if event is not None:
+                    event.seen_count = max(int(event.seen_count or 1) + 1, 2)
+                return event
 
             max_result = conn.execute("SELECT COALESCE(MAX(raw_event_id), 0) FROM raw_event").fetchone()
             next_id = (max_result[0] if max_result[0] else 0) + 1
@@ -351,11 +351,10 @@ class RawEventRepository:
             return [self._row_to_event(row) for row in rows]
 
     def mark_processed(self, raw_event_id: int) -> None:
-        with self.db.get_connection() as conn:
-            conn.execute(
-                "UPDATE raw_event SET processing_status = 'completed', status = 'done' WHERE raw_event_id = ?",
-                [raw_event_id],
-            )
+        # DuckDB rewrites rows for UPDATE and can raise duplicate-key errors on
+        # primary-key indexed tables. Resolved-event presence is the durable
+        # processing marker, so this method is intentionally non-mutating.
+        return None
 
     def count(self) -> int:
         with self.db.get_connection(read_only=True) as conn:
@@ -515,26 +514,29 @@ class ResolvedEventRepository:
     def _row_to_event(self, row: Any) -> Optional[ResolvedEvent]:
         if row is None:
             return None
-        key_facts = _safe_json_loads(row[13], [])
+        key_facts = _safe_json_loads(row[19], []) if len(row) > 19 else []
         return ResolvedEvent(
             resolved_event_id=row[0],
             raw_event_id=row[1],
-            entity_id=row[2],
-            primary_category=row[3],
-            secondary_category=row[4],
-            sentiment_label=row[5],
-            sentiment_score=row[6],
-            importance_score=row[7],
-            trust_score=row[8],
-            parser_confidence=row[9],
-            novelty_score=row[10],
-            alert_level=row[11],
-            is_official=row[12],
-            summary_text=row[13],
+            insight_id=row[2] if len(row) > 2 else None,
+            entity_id=row[3] if len(row) > 3 else None,
+            primary_category=row[4] if len(row) > 4 else None,
+            secondary_category=row[5] if len(row) > 5 else None,
+            sentiment_label=row[6] if len(row) > 6 else None,
+            sentiment_score=row[7] if len(row) > 7 else None,
+            importance_score=row[8] if len(row) > 8 else None,
+            trust_score=row[9] if len(row) > 9 else None,
+            parser_confidence=row[10] if len(row) > 10 else None,
+            novelty_score=row[11] if len(row) > 11 else None,
+            alert_level=row[12] if len(row) > 12 else None,
+            is_official=bool(row[13]) if len(row) > 13 else False,
+            summary_text=row[14] if len(row) > 14 else None,
             key_facts=key_facts,
-            status=row[15],
-            resolved_at=_dt(row[16]) if len(row) > 16 else None,
-            acknowledged_at=_dt(row[17]) if len(row) > 17 else None,
+            status=row[20] if len(row) > 20 else "pending",
+            resolved_at=_dt(row[21]) if len(row) > 21 else None,
+            acknowledged_at=_dt(row[22]) if len(row) > 22 else None,
+            event_tier=row[23] if len(row) > 23 else None,
+            ignored_reason=row[24] if len(row) > 24 else None,
         )
 
 
@@ -659,7 +661,7 @@ class LlmInsightRepository:
             insight_json = json.dumps(insight, ensure_ascii=False)
             max_result = conn.execute("SELECT COALESCE(MAX(insight_id), 0) FROM llm_insight").fetchone()
             next_id = (max_result[0] if max_result[0] else 0) + 1
-            conn.execute(
+            row = conn.execute(
                 """
                 INSERT INTO llm_insight(insight_id, raw_event_id, document_id, model_used, provider, prompt_tokens, completion_tokens, insight_json)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -670,10 +672,43 @@ class LlmInsightRepository:
                     prompt_tokens = excluded.prompt_tokens,
                     completion_tokens = excluded.completion_tokens,
                     insight_json = excluded.insight_json
+                RETURNING insight_id
                 """,
                 [next_id, raw_event_id, insight.get("document_id"), insight.get("model_used", ""), insight.get("provider", ""), insight.get("prompt_tokens", 0), insight.get("completion_tokens", 0), insight_json],
-            )
-            return next_id
+            ).fetchone()
+            insight_id = int(row[0]) if row else int(next_id)
+            self._link_resolved_event(conn, raw_event_id=raw_event_id, insight_id=insight_id)
+            document_id = insight.get("document_id")
+            if document_id is not None:
+                conn.execute(
+                    "UPDATE filing_document SET llm_insight_json = ? WHERE document_id = ?",
+                    [insight_json, document_id],
+                )
+            else:
+                conn.execute(
+                    "UPDATE filing_document SET llm_insight_json = ? WHERE raw_event_id = ?",
+                    [insight_json, raw_event_id],
+                )
+            return insight_id
+
+    def _link_resolved_event(self, conn: Any, *, raw_event_id: int, insight_id: int) -> None:
+        row = conn.execute(
+            "SELECT * FROM resolved_event WHERE raw_event_id = ?",
+            [raw_event_id],
+        ).fetchone()
+        if not row:
+            return
+        columns = [item[0] for item in conn.description]
+        values = list(row)
+        values[columns.index("insight_id")] = insight_id
+        conn.execute("DELETE FROM resolved_event WHERE raw_event_id = ?", [raw_event_id])
+        conn.execute(
+            "INSERT INTO resolved_event ({}) VALUES ({})".format(
+                ", ".join(columns),
+                ", ".join("?" for _ in columns),
+            ),
+            values,
+        )
 
     def get_by_raw_event(self, raw_event_id: int) -> dict | None:
         with self.db.get_connection(read_only=True) as conn:
@@ -691,8 +726,10 @@ class SchedulerStateRepository:
         with self.db.get_connection() as conn:
             row = conn.execute("SELECT * FROM scheduler_state ORDER BY state_id DESC LIMIT 1").fetchone()
             if not row:
-                conn.execute("INSERT INTO scheduler_state(state_id) VALUES (1)")
-                return {"last_heartbeat": None, "last_cycle_at": None, "error_count": 0}
+                conn.execute("INSERT INTO scheduler_state DEFAULT VALUES")
+                row = conn.execute("SELECT * FROM scheduler_state ORDER BY state_id DESC LIMIT 1").fetchone()
+                if not row:
+                    return {"last_heartbeat": None, "last_cycle_at": None, "error_count": 0}
             return {
                 "last_heartbeat": _dt(row[1]),
                 "last_cycle_at": _dt(row[2]),
@@ -702,15 +739,46 @@ class SchedulerStateRepository:
 
     def update_heartbeat(self, stats: dict | None = None) -> None:
         with self.db.get_connection() as conn:
+            row = conn.execute("SELECT state_id FROM scheduler_state ORDER BY state_id DESC LIMIT 1").fetchone()
+            if not row:
+                conn.execute("INSERT INTO scheduler_state DEFAULT VALUES")
+                row = conn.execute("SELECT state_id FROM scheduler_state ORDER BY state_id DESC LIMIT 1").fetchone()
             stats_json = json.dumps(stats) if stats else None
+            state_id = row[0]
+            error_count = conn.execute(
+                "SELECT COALESCE(error_count, 0) FROM scheduler_state WHERE state_id = ?",
+                [state_id],
+            ).fetchone()[0]
+            conn.execute("DELETE FROM scheduler_state WHERE state_id = ?", [state_id])
             conn.execute(
-                "UPDATE scheduler_state SET last_heartbeat = CURRENT_TIMESTAMP, last_cycle_at = CURRENT_TIMESTAMP, cycle_stats_json = ? WHERE state_id = 1",
-                [stats_json],
+                """
+                INSERT INTO scheduler_state (
+                    state_id, last_heartbeat, last_cycle_at, cycle_stats_json, error_count
+                ) VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?)
+                """,
+                [state_id, stats_json, error_count],
             )
 
     def increment_error(self) -> None:
         with self.db.get_connection() as conn:
-            conn.execute("UPDATE scheduler_state SET error_count = error_count + 1 WHERE state_id = 1")
+            row = conn.execute("SELECT state_id FROM scheduler_state ORDER BY state_id DESC LIMIT 1").fetchone()
+            if not row:
+                conn.execute("INSERT INTO scheduler_state DEFAULT VALUES")
+                row = conn.execute("SELECT state_id FROM scheduler_state ORDER BY state_id DESC LIMIT 1").fetchone()
+            state_id = row[0]
+            current = conn.execute(
+                "SELECT last_heartbeat, last_cycle_at, cycle_stats_json, COALESCE(error_count, 0) FROM scheduler_state WHERE state_id = ?",
+                [state_id],
+            ).fetchone()
+            conn.execute("DELETE FROM scheduler_state WHERE state_id = ?", [state_id])
+            conn.execute(
+                """
+                INSERT INTO scheduler_state (
+                    state_id, last_heartbeat, last_cycle_at, cycle_stats_json, error_count
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                [state_id, current[0], current[1], current[2], int(current[3] or 0) + 1],
+            )
 
 
 # ---------------------------------------------------------------------------
