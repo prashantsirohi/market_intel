@@ -676,3 +676,471 @@ class SchedulerStateRepository:
     def increment_error(self) -> None:
         with self.db.get_connection() as conn:
             conn.execute("UPDATE scheduler_state SET error_count = error_count + 1 WHERE state_id = 1")
+
+
+# ---------------------------------------------------------------------------
+# New repositories for Phase 0.1 collectors
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class BulkDeal:
+    bulk_deal_id: Optional[int] = None
+    trade_date: Optional[datetime] = None
+    symbol: str = ""
+    exchange: str = ""
+    client_name: Optional[str] = None
+    side: str = ""
+    quantity: Optional[int] = None
+    avg_price: Optional[float] = None
+    deal_value_cr: Optional[float] = None
+    is_block: bool = False
+    source_url: Optional[str] = None
+    deal_hash: str = ""
+    ingested_at: Optional[datetime] = None
+
+
+@dataclass
+class InsiderTrade:
+    insider_trade_id: Optional[int] = None
+    symbol: str = ""
+    person_name: Optional[str] = None
+    designation: Optional[str] = None
+    relation_to_company: Optional[str] = None
+    txn_type: Optional[str] = None
+    quantity: Optional[int] = None
+    value_cr: Optional[float] = None
+    txn_date: Optional[datetime] = None
+    disclosed_date: Optional[datetime] = None
+    holding_pre_pct: Optional[float] = None
+    holding_post_pct: Optional[float] = None
+    source_url: Optional[str] = None
+    txn_hash: str = ""
+    ingested_at: Optional[datetime] = None
+
+
+@dataclass
+class RatingChange:
+    rating_change_id: Optional[int] = None
+    symbol: Optional[str] = None
+    company_name: Optional[str] = None
+    agency: str = ""
+    instrument: Optional[str] = None
+    old_rating: Optional[str] = None
+    new_rating: Optional[str] = None
+    action: Optional[str] = None
+    rationale_excerpt: Optional[str] = None
+    dated: Optional[datetime] = None
+    source_url: Optional[str] = None
+    change_hash: str = ""
+    ingested_at: Optional[datetime] = None
+
+
+@dataclass
+class SastFiling:
+    sast_filing_id: Optional[int] = None
+    symbol: str = ""
+    acquirer_name: Optional[str] = None
+    regulation: Optional[str] = None
+    txn_type: Optional[str] = None
+    pre_acquisition_pct: Optional[float] = None
+    post_acquisition_pct: Optional[float] = None
+    quantity: Optional[int] = None
+    value_cr: Optional[float] = None
+    txn_date: Optional[datetime] = None
+    disclosed_date: Optional[datetime] = None
+    source_url: Optional[str] = None
+    filing_hash: str = ""
+    ingested_at: Optional[datetime] = None
+
+
+class BulkDealRepository:
+    def __init__(self, db: Database):
+        self.db = db
+
+    def upsert(
+        self,
+        *,
+        trade_date: Any,
+        symbol: str,
+        exchange: str,
+        side: str,
+        client_name: Optional[str] = None,
+        quantity: Optional[int] = None,
+        avg_price: Optional[float] = None,
+        deal_value_cr: Optional[float] = None,
+        is_block: bool = False,
+        source_url: Optional[str] = None,
+        deal_hash: str,
+    ) -> BulkDeal:
+        with self.db.get_connection() as conn:
+            row = conn.execute(
+                "SELECT bulk_deal_id FROM bulk_deal WHERE deal_hash = ?",
+                [deal_hash],
+            ).fetchone()
+            if row:
+                return BulkDeal(bulk_deal_id=row[0], deal_hash=deal_hash)
+
+            conn.execute(
+                """
+                INSERT INTO bulk_deal
+                    (trade_date, symbol, exchange, client_name, side, quantity,
+                     avg_price, deal_value_cr, is_block, source_url, deal_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    trade_date, symbol.upper(), exchange.upper(), client_name,
+                    side.upper(), quantity, avg_price, deal_value_cr,
+                    is_block, source_url, deal_hash,
+                ],
+            )
+            new_id = conn.execute(
+                "SELECT bulk_deal_id FROM bulk_deal WHERE deal_hash = ?",
+                [deal_hash],
+            ).fetchone()[0]
+        return BulkDeal(
+            bulk_deal_id=new_id,
+            trade_date=_dt(trade_date),
+            symbol=symbol.upper(),
+            exchange=exchange.upper(),
+            client_name=client_name,
+            side=side.upper(),
+            quantity=quantity,
+            avg_price=avg_price,
+            deal_value_cr=deal_value_cr,
+            is_block=is_block,
+            source_url=source_url,
+            deal_hash=deal_hash,
+        )
+
+    def list_by_symbol(
+        self,
+        symbol: str,
+        *,
+        since: Optional[datetime] = None,
+        limit: int = 100,
+    ) -> list[BulkDeal]:
+        with self.db.get_connection(read_only=True) as conn:
+            if since:
+                rows = conn.execute(
+                    "SELECT * FROM bulk_deal WHERE symbol = ? AND trade_date >= ? ORDER BY trade_date DESC LIMIT ?",
+                    [symbol.upper(), since, limit],
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM bulk_deal WHERE symbol = ? ORDER BY trade_date DESC LIMIT ?",
+                    [symbol.upper(), limit],
+                ).fetchall()
+            return [self._row_to_deal(r) for r in rows]
+
+    def _row_to_deal(self, row: Any) -> BulkDeal:
+        return BulkDeal(
+            bulk_deal_id=row[0],
+            trade_date=_dt(row[1]),
+            symbol=row[2],
+            exchange=row[3],
+            client_name=row[4],
+            side=row[5],
+            quantity=row[6],
+            avg_price=row[7],
+            deal_value_cr=row[8],
+            is_block=bool(row[9]),
+            source_url=row[10],
+            deal_hash=row[11],
+            ingested_at=_dt(row[12]) if len(row) > 12 else None,
+        )
+
+
+class InsiderTradeRepository:
+    def __init__(self, db: Database):
+        self.db = db
+
+    def upsert(
+        self,
+        *,
+        symbol: str,
+        txn_hash: str,
+        person_name: Optional[str] = None,
+        designation: Optional[str] = None,
+        relation_to_company: Optional[str] = None,
+        txn_type: Optional[str] = None,
+        quantity: Optional[int] = None,
+        value_cr: Optional[float] = None,
+        txn_date: Any = None,
+        disclosed_date: Any = None,
+        holding_pre_pct: Optional[float] = None,
+        holding_post_pct: Optional[float] = None,
+        source_url: Optional[str] = None,
+    ) -> InsiderTrade:
+        with self.db.get_connection() as conn:
+            row = conn.execute(
+                "SELECT insider_trade_id FROM insider_trade WHERE txn_hash = ?",
+                [txn_hash],
+            ).fetchone()
+            if row:
+                return InsiderTrade(insider_trade_id=row[0], symbol=symbol, txn_hash=txn_hash)
+
+            conn.execute(
+                """
+                INSERT INTO insider_trade
+                    (symbol, person_name, designation, relation_to_company, txn_type,
+                     quantity, value_cr, txn_date, disclosed_date, holding_pre_pct,
+                     holding_post_pct, source_url, txn_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    symbol.upper(), person_name, designation, relation_to_company,
+                    txn_type, quantity, value_cr, txn_date, disclosed_date,
+                    holding_pre_pct, holding_post_pct, source_url, txn_hash,
+                ],
+            )
+            new_id = conn.execute(
+                "SELECT insider_trade_id FROM insider_trade WHERE txn_hash = ?",
+                [txn_hash],
+            ).fetchone()[0]
+        return InsiderTrade(
+            insider_trade_id=new_id,
+            symbol=symbol.upper(),
+            person_name=person_name,
+            designation=designation,
+            txn_type=txn_type,
+            quantity=quantity,
+            value_cr=value_cr,
+            txn_date=_dt(txn_date),
+            disclosed_date=_dt(disclosed_date),
+            txn_hash=txn_hash,
+        )
+
+    def list_by_symbol(
+        self,
+        symbol: str,
+        *,
+        since: Optional[datetime] = None,
+        limit: int = 50,
+    ) -> list[InsiderTrade]:
+        with self.db.get_connection(read_only=True) as conn:
+            if since:
+                rows = conn.execute(
+                    "SELECT * FROM insider_trade WHERE symbol = ? AND txn_date >= ? ORDER BY txn_date DESC LIMIT ?",
+                    [symbol.upper(), since, limit],
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM insider_trade WHERE symbol = ? ORDER BY txn_date DESC LIMIT ?",
+                    [symbol.upper(), limit],
+                ).fetchall()
+            return [self._row_to_trade(r) for r in rows]
+
+    def _row_to_trade(self, row: Any) -> InsiderTrade:
+        return InsiderTrade(
+            insider_trade_id=row[0],
+            symbol=row[1],
+            person_name=row[2],
+            designation=row[3],
+            relation_to_company=row[4],
+            txn_type=row[5],
+            quantity=row[6],
+            value_cr=row[7],
+            txn_date=_dt(row[8]),
+            disclosed_date=_dt(row[9]),
+            holding_pre_pct=row[10],
+            holding_post_pct=row[11],
+            source_url=row[12],
+            txn_hash=row[13],
+            ingested_at=_dt(row[14]) if len(row) > 14 else None,
+        )
+
+
+class RatingChangeRepository:
+    def __init__(self, db: Database):
+        self.db = db
+
+    def upsert(
+        self,
+        *,
+        change_hash: str,
+        agency: str,
+        symbol: Optional[str] = None,
+        company_name: Optional[str] = None,
+        instrument: Optional[str] = None,
+        old_rating: Optional[str] = None,
+        new_rating: Optional[str] = None,
+        action: Optional[str] = None,
+        rationale_excerpt: Optional[str] = None,
+        dated: Any = None,
+        source_url: Optional[str] = None,
+    ) -> RatingChange:
+        with self.db.get_connection() as conn:
+            row = conn.execute(
+                "SELECT rating_change_id FROM rating_change WHERE change_hash = ?",
+                [change_hash],
+            ).fetchone()
+            if row:
+                return RatingChange(rating_change_id=row[0], agency=agency, change_hash=change_hash)
+
+            conn.execute(
+                """
+                INSERT INTO rating_change
+                    (symbol, company_name, agency, instrument, old_rating, new_rating,
+                     action, rationale_excerpt, dated, source_url, change_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    symbol.upper() if symbol else None, company_name, agency,
+                    instrument, old_rating, new_rating, action,
+                    rationale_excerpt, dated, source_url, change_hash,
+                ],
+            )
+            new_id = conn.execute(
+                "SELECT rating_change_id FROM rating_change WHERE change_hash = ?",
+                [change_hash],
+            ).fetchone()[0]
+        return RatingChange(
+            rating_change_id=new_id,
+            symbol=symbol,
+            company_name=company_name,
+            agency=agency,
+            instrument=instrument,
+            old_rating=old_rating,
+            new_rating=new_rating,
+            action=action,
+            dated=_dt(dated),
+            change_hash=change_hash,
+        )
+
+    def list_by_symbol(
+        self,
+        symbol: str,
+        *,
+        since: Optional[datetime] = None,
+        limit: int = 20,
+    ) -> list[RatingChange]:
+        with self.db.get_connection(read_only=True) as conn:
+            if since:
+                rows = conn.execute(
+                    "SELECT * FROM rating_change WHERE symbol = ? AND dated >= ? ORDER BY dated DESC LIMIT ?",
+                    [symbol.upper(), since, limit],
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM rating_change WHERE symbol = ? ORDER BY dated DESC LIMIT ?",
+                    [symbol.upper(), limit],
+                ).fetchall()
+            return [self._row_to_change(r) for r in rows]
+
+    def _row_to_change(self, row: Any) -> RatingChange:
+        return RatingChange(
+            rating_change_id=row[0],
+            symbol=row[1],
+            company_name=row[2],
+            agency=row[3],
+            instrument=row[4],
+            old_rating=row[5],
+            new_rating=row[6],
+            action=row[7],
+            rationale_excerpt=row[8],
+            dated=_dt(row[9]),
+            source_url=row[10],
+            change_hash=row[11],
+            ingested_at=_dt(row[12]) if len(row) > 12 else None,
+        )
+
+
+class SastFilingRepository:
+    def __init__(self, db: Database):
+        self.db = db
+
+    def upsert(
+        self,
+        *,
+        symbol: str,
+        filing_hash: str,
+        acquirer_name: Optional[str] = None,
+        regulation: Optional[str] = None,
+        txn_type: Optional[str] = None,
+        pre_acquisition_pct: Optional[float] = None,
+        post_acquisition_pct: Optional[float] = None,
+        quantity: Optional[int] = None,
+        value_cr: Optional[float] = None,
+        txn_date: Any = None,
+        disclosed_date: Any = None,
+        source_url: Optional[str] = None,
+    ) -> SastFiling:
+        with self.db.get_connection() as conn:
+            row = conn.execute(
+                "SELECT sast_filing_id FROM sast_filing WHERE filing_hash = ?",
+                [filing_hash],
+            ).fetchone()
+            if row:
+                return SastFiling(sast_filing_id=row[0], symbol=symbol, filing_hash=filing_hash)
+
+            conn.execute(
+                """
+                INSERT INTO sast_filing
+                    (symbol, acquirer_name, regulation, txn_type, pre_acquisition_pct,
+                     post_acquisition_pct, quantity, value_cr, txn_date, disclosed_date,
+                     source_url, filing_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    symbol.upper(), acquirer_name, regulation, txn_type,
+                    pre_acquisition_pct, post_acquisition_pct, quantity, value_cr,
+                    txn_date, disclosed_date, source_url, filing_hash,
+                ],
+            )
+            new_id = conn.execute(
+                "SELECT sast_filing_id FROM sast_filing WHERE filing_hash = ?",
+                [filing_hash],
+            ).fetchone()[0]
+        return SastFiling(
+            sast_filing_id=new_id,
+            symbol=symbol.upper(),
+            acquirer_name=acquirer_name,
+            regulation=regulation,
+            txn_type=txn_type,
+            pre_acquisition_pct=pre_acquisition_pct,
+            post_acquisition_pct=post_acquisition_pct,
+            quantity=quantity,
+            value_cr=value_cr,
+            txn_date=_dt(txn_date),
+            disclosed_date=_dt(disclosed_date),
+            filing_hash=filing_hash,
+        )
+
+    def list_by_symbol(
+        self,
+        symbol: str,
+        *,
+        since: Optional[datetime] = None,
+        limit: int = 50,
+    ) -> list[SastFiling]:
+        with self.db.get_connection(read_only=True) as conn:
+            if since:
+                rows = conn.execute(
+                    "SELECT * FROM sast_filing WHERE symbol = ? AND txn_date >= ? ORDER BY txn_date DESC LIMIT ?",
+                    [symbol.upper(), since, limit],
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM sast_filing WHERE symbol = ? ORDER BY txn_date DESC LIMIT ?",
+                    [symbol.upper(), limit],
+                ).fetchall()
+            return [self._row_to_filing(r) for r in rows]
+
+    def _row_to_filing(self, row: Any) -> SastFiling:
+        return SastFiling(
+            sast_filing_id=row[0],
+            symbol=row[1],
+            acquirer_name=row[2],
+            regulation=row[3],
+            txn_type=row[4],
+            pre_acquisition_pct=row[5],
+            post_acquisition_pct=row[6],
+            quantity=row[7],
+            value_cr=row[8],
+            txn_date=_dt(row[9]),
+            disclosed_date=_dt(row[10]),
+            source_url=row[11],
+            filing_hash=row[12],
+            ingested_at=_dt(row[13]) if len(row) > 13 else None,
+        )

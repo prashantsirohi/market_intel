@@ -8,6 +8,14 @@ from .repositories import (
     RawEvent,
     ResolvedEvent,
     AlertLog,
+    BulkDealRepository,
+    InsiderTradeRepository,
+    RatingChangeRepository,
+    SastFilingRepository,
+    BulkDeal,
+    InsiderTrade,
+    RatingChange,
+    SastFiling,
 )
 
 __all__ = [
@@ -20,4 +28,12 @@ __all__ = [
     "RawEvent",
     "ResolvedEvent",
     "AlertLog",
+    "BulkDealRepository",
+    "InsiderTradeRepository",
+    "RatingChangeRepository",
+    "SastFilingRepository",
+    "BulkDeal",
+    "InsiderTrade",
+    "RatingChange",
+    "SastFiling",
 ]

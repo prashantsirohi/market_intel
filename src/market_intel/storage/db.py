@@ -16,6 +16,10 @@ if TYPE_CHECKING:
         RawEventRepository,
         ResolvedEventRepository,
         AlertLogRepository,
+        BulkDealRepository,
+        InsiderTradeRepository,
+        RatingChangeRepository,
+        SastFilingRepository,
     )
 
 
@@ -103,6 +107,30 @@ class Database:
         if "alert_log" not in self._repos:
             self._repos["alert_log"] = AlertLogRepository(self)
         return self._repos["alert_log"]
+
+    def bulk_deal_repo(self) -> "BulkDealRepository":
+        from market_intel.storage.repositories import BulkDealRepository
+        if "bulk_deal" not in self._repos:
+            self._repos["bulk_deal"] = BulkDealRepository(self)
+        return self._repos["bulk_deal"]
+
+    def insider_trade_repo(self) -> "InsiderTradeRepository":
+        from market_intel.storage.repositories import InsiderTradeRepository
+        if "insider_trade" not in self._repos:
+            self._repos["insider_trade"] = InsiderTradeRepository(self)
+        return self._repos["insider_trade"]
+
+    def rating_change_repo(self) -> "RatingChangeRepository":
+        from market_intel.storage.repositories import RatingChangeRepository
+        if "rating_change" not in self._repos:
+            self._repos["rating_change"] = RatingChangeRepository(self)
+        return self._repos["rating_change"]
+
+    def sast_filing_repo(self) -> "SastFilingRepository":
+        from market_intel.storage.repositories import SastFilingRepository
+        if "sast_filing" not in self._repos:
+            self._repos["sast_filing"] = SastFilingRepository(self)
+        return self._repos["sast_filing"]
 
     def close(self) -> None:
         if self._connection is not None:
