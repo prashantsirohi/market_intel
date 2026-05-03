@@ -83,6 +83,8 @@ CREATE TABLE IF NOT EXISTS resolved_event (
     status VARCHAR NOT NULL DEFAULT 'pending',
     resolved_at TIMESTAMP,
     acknowledged_at TIMESTAMP,
+    event_tier VARCHAR,
+    ignored_reason VARCHAR,
     UNIQUE(raw_event_id)
 );
 

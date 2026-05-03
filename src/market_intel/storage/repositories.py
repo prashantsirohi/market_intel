@@ -302,7 +302,13 @@ class RawEventRepository:
                 conn.execute(
                     f"UPDATE raw_event SET seen_count = seen_count + 1, ingested_at = CURRENT_TIMESTAMP WHERE event_hash = {_v(event_hash)}"
                 )
-                return self._row_to_event(existing)
+                # Re-fetch AFTER the update so seen_count reflects the new value.
+                # The pre-update snapshot always had seen_count=1, causing
+                # process_rss_item to treat every re-seen event as new.
+                updated = conn.execute(
+                    "SELECT * FROM raw_event WHERE event_hash = ?", [event_hash]
+                ).fetchone()
+                return self._row_to_event(updated)
 
             max_result = conn.execute("SELECT COALESCE(MAX(raw_event_id), 0) FROM raw_event").fetchone()
             next_id = (max_result[0] if max_result[0] else 0) + 1
@@ -418,42 +424,71 @@ class ResolvedEventRepository:
                 return "TRUE" if val else "FALSE"
             if isinstance(val, (int, float)):
                 return str(val)
-            return repr(val)
+            # Use proper SQL single-quote escaping (not repr which can produce
+            # double-quoted Python literals that DuckDB treats as identifiers).
+            escaped = str(val).replace("'", "''")
+            return f"'{escaped}'"
 
         with self.db.get_connection() as conn:
-            max_result = conn.execute("SELECT COALESCE(MAX(resolved_event_id), 0) FROM resolved_event").fetchone()
-            next_id = (max_result[0] if max_result[0] else 0) + 1
             now = datetime.now().isoformat()
-            conn.execute(
-                f"""
-                INSERT INTO resolved_event(resolved_event_id, raw_event_id, entity_id, primary_category, secondary_category, sentiment_label, sentiment_score, importance_score, trust_score, parser_confidence, novelty_score, alert_level, is_official, summary_text, key_facts_json, status, resolved_at, event_tier, ignored_reason)
-                VALUES ({next_id}, {raw_event_id}, {_v(entity_id)}, {_v(primary_category)}, {_v(secondary_category)}, {_v(sentiment_label)}, {_v(sentiment_score)}, {_v(importance_score)}, {_v(trust_score)}, {_v(parser_confidence)}, {_v(novelty_score)}, {_v(alert_level)}, {_v(is_official)}, {_v(summary_text)}, {_v(key_facts_json)}, '{status}', '{now}', {_v(event_tier)}, {_v(ignored_reason)})
-                ON CONFLICT(raw_event_id) DO UPDATE SET
-                    entity_id = COALESCE(excluded.entity_id, resolved_event.entity_id),
-                    primary_category = COALESCE(excluded.primary_category, resolved_event.primary_category),
-                    secondary_category = COALESCE(excluded.secondary_category, resolved_event.secondary_category),
-                    sentiment_label = COALESCE(excluded.sentiment_label, resolved_event.sentiment_label),
-                    sentiment_score = COALESCE(excluded.sentiment_score, resolved_event.sentiment_score),
-                    importance_score = COALESCE(excluded.importance_score, resolved_event.importance_score),
-                    trust_score = COALESCE(excluded.trust_score, resolved_event.trust_score),
-                    parser_confidence = COALESCE(excluded.parser_confidence, resolved_event.parser_confidence),
-                    novelty_score = COALESCE(excluded.novelty_score, resolved_event.novelty_score),
-                    alert_level = COALESCE(excluded.alert_level, resolved_event.alert_level),
-                    is_official = excluded.is_official,
-                    summary_text = COALESCE(excluded.summary_text, resolved_event.summary_text),
-                    key_facts_json = COALESCE(excluded.key_facts_json, resolved_event.key_facts_json),
-                    status = excluded.status,
-                    resolved_at = '{now}',
-                    event_tier = COALESCE(excluded.event_tier, resolved_event.event_tier),
-                    ignored_reason = COALESCE(excluded.ignored_reason, resolved_event.ignored_reason)
-                """,
-            )
+
+            # DuckDB refuses ON CONFLICT DO UPDATE for any indexed column
+            # (alert_level, status, entity_id all have indexes).  Use an
+            # explicit check-then-insert / check-then-update pattern instead.
+            existing = conn.execute(
+                "SELECT resolved_event_id FROM resolved_event WHERE raw_event_id = ?",
+                [raw_event_id],
+            ).fetchone()
+
+            if existing:
+                # Update only the non-indexed columns that carry new information.
+                conn.execute(
+                    f"""
+                    UPDATE resolved_event SET
+                        primary_category   = COALESCE({_v(primary_category)},   primary_category),
+                        secondary_category = COALESCE({_v(secondary_category)}, secondary_category),
+                        sentiment_label    = COALESCE({_v(sentiment_label)},    sentiment_label),
+                        sentiment_score    = COALESCE({_v(sentiment_score)},    sentiment_score),
+                        importance_score   = COALESCE({_v(importance_score)},   importance_score),
+                        trust_score        = COALESCE({_v(trust_score)},        trust_score),
+                        parser_confidence  = COALESCE({_v(parser_confidence)},  parser_confidence),
+                        novelty_score      = COALESCE({_v(novelty_score)},      novelty_score),
+                        is_official        = {_v(is_official)},
+                        summary_text       = COALESCE({_v(summary_text)},       summary_text),
+                        key_facts_json     = COALESCE({_v(key_facts_json)},     key_facts_json),
+                        resolved_at        = '{now}',
+                        event_tier         = COALESCE({_v(event_tier)},         event_tier),
+                        ignored_reason     = COALESCE({_v(ignored_reason)},     ignored_reason)
+                    WHERE raw_event_id = {raw_event_id}
+                    """,
+                )
+            else:
+                # Omit resolved_event_id — let the schema's nextval sequence assign it.
+                # Using MAX+1 causes collisions when prior partial runs left gaps.
+                conn.execute(
+                    f"""
+                    INSERT INTO resolved_event(
+                        raw_event_id, entity_id,
+                        primary_category, secondary_category,
+                        sentiment_label, sentiment_score, importance_score,
+                        trust_score, parser_confidence, novelty_score,
+                        alert_level, is_official, summary_text, key_facts_json,
+                        status, resolved_at, event_tier, ignored_reason
+                    ) VALUES (
+                        {raw_event_id}, {_v(entity_id)},
+                        {_v(primary_category)}, {_v(secondary_category)},
+                        {_v(sentiment_label)}, {_v(sentiment_score)}, {_v(importance_score)},
+                        {_v(trust_score)}, {_v(parser_confidence)}, {_v(novelty_score)},
+                        {_v(alert_level)}, {_v(is_official)}, {_v(summary_text)}, {_v(key_facts_json)},
+                        '{status}', '{now}', {_v(event_tier)}, {_v(ignored_reason)}
+                    )
+                    """,
+                )
 
             row = conn.execute(
                 "SELECT * FROM resolved_event WHERE raw_event_id = ?",
-                [raw_event_id]
+                [raw_event_id],
             ).fetchone()
-
             return self._row_to_event(row) if row else None
 
     def get_by_raw_id(self, raw_event_id: int) -> Optional[ResolvedEvent]:

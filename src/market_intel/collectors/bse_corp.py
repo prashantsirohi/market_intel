@@ -75,13 +75,14 @@ def parse_bse_announcements(payload: dict[str, Any]) -> list[CollectorItem]:
     rows = payload.get("Table") or []
     items: list[CollectorItem] = []
     for row in rows:
-        symbol = (row.get("SCRIP_CD") or row.get("SCRIPCD") or "").strip() or None
-        # SCRIP_CD is BSE numeric code; we try to also pull NSE-style ticker
-        ticker = (row.get("SCRIPCDISIN") or row.get("SLONGNAME") or "").strip() or None
-        title = (row.get("HEADLINE") or row.get("NEWSSUB") or "").strip()
+        # SCRIP_CD is a BSE numeric code (int); cast to str before strip
+        symbol = str(row.get("SCRIP_CD") or row.get("SCRIPCD") or "").strip() or None
+        # SCRIPCDISIN / SLONGNAME may be a company name, not an NSE ticker
+        ticker = str(row.get("SCRIPCDISIN") or row.get("SLONGNAME") or "").strip() or None
+        title = str(row.get("HEADLINE") or row.get("NEWSSUB") or "").strip()
         if not title:
             continue
-        description = (row.get("MORE") or row.get("NEWSBODY") or "").strip() or None
+        description = str(row.get("MORE") or row.get("NEWSBODY") or "").strip() or None
         published = _parse_news_dt(row.get("NEWS_DT") or row.get("DT_TM"))
         attach = row.get("ATTACHMENTNAME") or row.get("ATTACHMENT")
         link = _build_link(row)
@@ -97,7 +98,7 @@ def parse_bse_announcements(payload: dict[str, Any]) -> list[CollectorItem]:
                 published_at=published,
                 link=link,
                 attachment_url=f"{BSE_PDF_BASE}{attach}" if attach else None,
-                company_name=(row.get("SLONGNAME") or "").strip() or None,
+                company_name=str(row.get("SLONGNAME") or "").strip() or None,
                 raw_payload=row,
             )
         )
