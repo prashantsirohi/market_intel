@@ -27,10 +27,19 @@ class Database:
     _instance_lock = threading.Lock()
     _connection: duckdb.DuckDBPyConnection | None = None
     
-    def __init__(self, db_path: str = "./data/market_intel.duckdb", fresh: bool = False):
+    def __init__(
+        self,
+        db_path: str = "./data/market_intel.duckdb",
+        fresh: bool = False,
+        *,
+        read_only: bool = False,
+    ):
         self.db_path = db_path
         self._repos: dict[str, object] = {}
         self._write_lock = threading.Lock()
+        self._read_only = read_only
+        if read_only:
+            return
         if db_path == ":memory:":
             self._connection = duckdb.connect(db_path)
             self._init_schema()
@@ -38,10 +47,17 @@ class Database:
             self._ensure_directories()
             self._init_db(fresh=fresh)
 
+    @classmethod
+    def open_readonly(cls, db_path: str) -> "Database":
+        """Open an existing DuckDB for reads without creating or migrating it."""
+        return cls(db_path=db_path, read_only=True)
+
     def _ensure_directories(self) -> None:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
 
     def _connect(self, read_only: bool = False) -> duckdb.DuckDBPyConnection:
+        if self._read_only and not read_only:
+            raise RuntimeError("Database was opened read-only; write connection requested")
         if self._connection is not None:
             return self._connection
         with self._write_lock:
@@ -54,19 +70,25 @@ class Database:
 
     def _init_schema(self) -> None:
         import market_intel
+        from market_intel.storage.migrations import apply_migrations
         schema_path = Path(market_intel.__file__).parent / "storage" / "schema.sql"
         schema_sql = schema_path.read_text(encoding="utf-8")
         self._connection.execute(schema_sql)
+        apply_migrations(self._connection)
 
     def _init_db(self, fresh: bool = False) -> None:
         import market_intel
+        from market_intel.storage.migrations import apply_migrations
         if fresh and Path(self.db_path).exists():
             Path(self.db_path).unlink()
+        db_exists = Path(self.db_path).exists()
         schema_path = Path(market_intel.__file__).parent / "storage" / "schema.sql"
         schema_sql = schema_path.read_text(encoding="utf-8")
         conn = self._connect()
         try:
-            conn.execute(schema_sql)
+            if fresh or not db_exists:
+                conn.execute(schema_sql)
+            apply_migrations(conn)
         finally:
             # Drop the cached writable connection so that a subsequent
             # get_connection(read_only=True) call can open a fresh handle.

@@ -10,6 +10,11 @@ CREATE SEQUENCE IF NOT EXISTS alert_log_seq;
 CREATE SEQUENCE IF NOT EXISTS llm_insight_seq;
 CREATE SEQUENCE IF NOT EXISTS scheduler_state_seq;
 
+CREATE TABLE IF NOT EXISTS schema_version (
+    version VARCHAR PRIMARY KEY,
+    applied_at TIMESTAMP NOT NULL DEFAULT current_timestamp
+);
+
 -- Table: tracked_entity
 -- Company/entity tracking with per-entity alert config
 CREATE TABLE IF NOT EXISTS tracked_entity (

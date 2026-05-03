@@ -145,6 +145,25 @@ def add_entity(args: argparse.Namespace) -> int:
         db.close()
 
 
+def migrate(args: argparse.Namespace) -> int:
+    db = Database(args.db_path)
+    try:
+        from market_intel.storage.migrations import apply_migrations
+
+        with db.get_connection() as conn:
+            applied = apply_migrations(conn)
+        if applied:
+            logger.info("Applied migrations: %s", ", ".join(applied))
+        else:
+            logger.info("Schema already up to date")
+        return 0
+    except Exception as exc:
+        logger.error("Migration failed: %s", exc)
+        return 1
+    finally:
+        db.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Market Intel - NSE Corporate Announcements Intelligence",
@@ -178,6 +197,9 @@ def main(argv: list[str] | None = None) -> int:
     entity_parser.add_argument("--sector", help="Sector")
     entity_parser.add_argument("--priority", type=int, help="Priority (0-10)")
     entity_parser.set_defaults(func=add_entity)
+
+    migrate_parser = subparsers.add_parser("migrate", help="Apply schema migrations")
+    migrate_parser.set_defaults(func=migrate)
 
     args = parser.parse_args(argv)
 

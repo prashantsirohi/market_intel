@@ -109,6 +109,11 @@ class EventQueryService:
             raise ValueError("Provide either `db` or `db_path`")
         self._db = db or Database(db_path=db_path)  # type: ignore[arg-type]
 
+    @classmethod
+    def from_readonly_path(cls, db_path: str) -> "EventQueryService":
+        """Construct a read-only service without creating or migrating the DB."""
+        return cls(db=Database.open_readonly(db_path))
+
     # ------------------------------------------------------------------ events
 
     def get_events_for_symbol(
@@ -161,10 +166,35 @@ class EventQueryService:
             )
         return out
 
+    def get_important_events(
+        self,
+        *,
+        since: datetime,
+        until: datetime | None = None,
+        categories: Iterable[str] | None = None,
+        tiers: Iterable[str] = ("A", "B"),
+        min_importance: float = 0.0,
+        min_trust: float = 80.0,
+        limit: int = 500,
+    ) -> list[ResolvedEventRecord]:
+        """Return market-wide important events for daily snapshot consumers."""
+        rows = self._query_events(
+            symbols=None,
+            since=since,
+            until=until,
+            categories=categories,
+            min_importance=min_importance,
+            min_trust=min_trust,
+            limit=limit,
+        )
+        tier_set = set(tiers)
+        return [r for r in rows if r.event_tier in tier_set]
+
+
     def _query_events(
         self,
         *,
-        symbols: list[str],
+        symbols: list[str] | None,
         since: datetime,
         until: datetime | None,
         categories: Iterable[str] | None,
@@ -172,8 +202,13 @@ class EventQueryService:
         min_trust: float,
         limit: int,
     ) -> list[ResolvedEventRecord]:
-        clauses = ["r.symbol IN ({})".format(",".join("?" for _ in symbols))]
-        params: list[Any] = list(symbols)
+        clauses: list[str] = []
+        params: list[Any] = []
+        if symbols:
+            clauses.append("r.symbol IN ({})".format(",".join("?" for _ in symbols)))
+            params.extend(symbols)
+        else:
+            clauses.append("r.symbol IS NOT NULL")
         clauses.append("(r.event_date >= ? OR r.published_at >= ?)")
         params.extend([since, since])
         if until is not None:
@@ -385,6 +420,24 @@ class EventQueryService:
             for row in rows
         ]
 
+    def get_market_caps(self, symbols: Iterable[str]) -> dict[str, float]:
+        """Return market caps in INR keyed by symbol from tracked_entity."""
+        sym_list = [str(sym).upper() for sym in symbols if str(sym or "").strip()]
+        if not sym_list:
+            return {}
+        sql = """
+            SELECT symbol, market_cap_cr
+            FROM tracked_entity
+            WHERE symbol IN ({}) AND market_cap_cr IS NOT NULL
+        """.format(",".join("?" for _ in sym_list))
+        with self._db.get_connection(read_only=True) as conn:
+            rows = conn.execute(sql, sym_list).fetchall()
+        return {
+            str(row[0]).upper(): float(row[1]) * 1e7
+            for row in rows
+            if row[1] is not None
+        }
+
     # -------------------------------------------------------------- health
 
     def scheduler_health(self) -> dict[str, Any]:
@@ -412,3 +465,7 @@ class EventQueryService:
             "cycle_stats": stats,
             "error_count": int(row[3] or 0),
         }
+
+    def get_collector_health(self) -> dict[str, Any]:
+        """Alias for downstream clients that use EventQueryService as API."""
+        return self.scheduler_health()
