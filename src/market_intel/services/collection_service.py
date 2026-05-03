@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -233,6 +234,31 @@ def _route_rating(item: CollectorItem, db: "Database") -> bool:
     return change.rating_change_id is not None
 
 
+_RSS_SYMBOL_RE = re.compile(
+    r"""
+    (?:^|\s|\[|\()          # word boundary or bracket
+    ([A-Z][A-Z0-9&]{1,19})  # ticker: 2–20 uppercase chars
+    (?:\s*[-:]\s*EQ\b|\]|\)|$|\s)   # suffix: -EQ, :EQ, ], ), end, or space
+    """,
+    re.VERBOSE,
+)
+
+
+def _extract_rss_symbol(title: str, description: str) -> str | None:
+    """Best-effort symbol extraction from an NSE RSS title/description.
+
+    NSE titles commonly look like:
+      "Board Meeting - RELIANCE - Results"
+      "RELIANCE: Disclosure under Reg 30"
+      "[INFY] Analyst meet outcome"
+    """
+    text = (title or "") + " " + (description or "")
+    m = _RSS_SYMBOL_RE.search(text)
+    if m:
+        return m.group(1).upper()
+    return None
+
+
 def _route_rss_event(item: CollectorItem, ingest_svc: Any) -> dict:
     """Route an RSS/API corp-announcement item through EventIngestService."""
     record = {
@@ -330,13 +356,25 @@ class CollectionService:
             return
 
         for item in items:
+            # NseRssClient returns RssItem (title/link/description/pub_date/guid),
+            # not CollectorItem — build the ingest record directly.
             summary["rss_processed"] += 1
+            symbol = _extract_rss_symbol(item.title or "", item.description or "")
+            record = {
+                "title": item.title,
+                "link": item.link,
+                "pub_date": item.pub_date,
+                "description": item.description,
+                "guid": getattr(item, "guid", getattr(item, "raw_guid", None)),
+                "symbol": symbol,
+                "attachment_url": None,
+            }
             try:
-                result = _route_rss_event(item, ingest_svc)
+                result = ingest_svc.process_rss_item(record)
                 if result.get("status") == "new":
                     summary["rss_new"] += 1
             except Exception as exc:
-                logger.warning("NSE RSS ingest failed for %s: %s", item.symbol, exc)
+                logger.warning("NSE RSS ingest failed for %s: %s", symbol, exc)
                 summary["failed"] += 1
 
     def _run_bse_corp(self, summary: dict) -> None:
