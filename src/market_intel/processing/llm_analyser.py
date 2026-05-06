@@ -4,7 +4,6 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +30,17 @@ class InsightPayload:
     key_highlights: list[str] = None
     management_guidance: str | None = None
     risk_flags: list[str] = None
+
+    what_happened: str | None = None
+    money_value_cr: float | None = None
+    market_cap_pct: float | None = None
+    time_horizon: str | None = None
+    affected_segment: str | None = None
+    impact_direction: str = "neutral"
+    changes_earnings: bool = False
+    changes_balance_sheet: bool = False
+    changes_ownership: bool = False
+    changes_sentiment: bool = False
     
     period_label: str | None = None
     model_used: str = ""
@@ -68,6 +78,16 @@ class InsightPayload:
             "key_highlights": self.key_highlights,
             "management_guidance": self.management_guidance,
             "risk_flags": self.risk_flags,
+            "what_happened": self.what_happened,
+            "money_value_cr": self.money_value_cr,
+            "market_cap_pct": self.market_cap_pct,
+            "time_horizon": self.time_horizon,
+            "affected_segment": self.affected_segment,
+            "impact_direction": self.impact_direction,
+            "changes_earnings": self.changes_earnings,
+            "changes_balance_sheet": self.changes_balance_sheet,
+            "changes_ownership": self.changes_ownership,
+            "changes_sentiment": self.changes_sentiment,
             "period_label": self.period_label,
             "model_used": self.model_used,
             "prompt_tokens": self.prompt_tokens,
@@ -120,7 +140,7 @@ class LlmAnalyser:
 
     def _build_prompt(self, title: str, symbol: str, category: str | None, text: str) -> tuple[str, str]:
         system_prompt = """You are a financial analyst specializing in Indian listed companies (NSE/BSE).
-Analyze the corporate filing text and extract structured financial information.
+Analyze the corporate filing text and extract structured event information for trading operations.
 Return ONLY valid JSON (no markdown, no explanation).
 
 Schema:
@@ -143,6 +163,16 @@ Schema:
   "key_highlights": [],
   "management_guidance": null,
   "risk_flags": [],
+  "what_happened": "",
+  "money_value_cr": null,
+  "market_cap_pct": null,
+  "time_horizon": "immediate"|"near_term"|"medium_term"|"long_term"|"unknown",
+  "affected_segment": null,
+  "impact_direction": "positive"|"negative"|"neutral",
+  "changes_earnings": false,
+  "changes_balance_sheet": false,
+  "changes_ownership": false,
+  "changes_sentiment": false,
   "period_label": null
 }
 
@@ -228,6 +258,16 @@ Return ONLY the JSON, no other text."""
                 key_highlights=data.get("key_highlights", []),
                 management_guidance=data.get("management_guidance"),
                 risk_flags=data.get("risk_flags", []),
+                what_happened=data.get("what_happened"),
+                money_value_cr=data.get("money_value_cr"),
+                market_cap_pct=data.get("market_cap_pct"),
+                time_horizon=data.get("time_horizon"),
+                affected_segment=data.get("affected_segment"),
+                impact_direction=data.get("impact_direction", data.get("sentiment", "neutral")),
+                changes_earnings=bool(data.get("changes_earnings", False)),
+                changes_balance_sheet=bool(data.get("changes_balance_sheet", False)),
+                changes_ownership=bool(data.get("changes_ownership", False)),
+                changes_sentiment=bool(data.get("changes_sentiment", False)),
                 period_label=data.get("period_label"),
                 model_used=self.model,
             )

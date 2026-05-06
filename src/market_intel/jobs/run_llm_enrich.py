@@ -15,7 +15,6 @@ import logging
 import os
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from market_intel.processing.llm_analyser import LlmAnalyser
@@ -182,6 +181,23 @@ def _build_insight(row: dict[str, Any], *, analyser: LlmAnalyser | None) -> dict
         summary = data.get("one_line_summary") or title[:160]
         key_facts = data.get("key_highlights") or []
         risk_flags = data.get("risk_flags") or _parse_json_list(row.get("risk_flags_json"))
+        what_happened = data.get("what_happened") or summary
+        money_value_cr = data.get("money_value_cr") or _first_present(
+            data,
+            "capex_amount_cr",
+            "order_value_cr",
+            "buyback_size_cr",
+        )
+        market_cap_pct = data.get("market_cap_pct")
+        time_horizon = data.get("time_horizon") or data.get("impact_horizon") or _impact_horizon(category)
+        affected_segment = data.get("affected_segment")
+        impact_direction = data.get("impact_direction") or data.get("sentiment") or "neutral"
+        changes = {
+            "earnings": bool(data.get("changes_earnings")),
+            "balance_sheet": bool(data.get("changes_balance_sheet")),
+            "ownership": bool(data.get("changes_ownership")),
+            "sentiment": bool(data.get("changes_sentiment")),
+        }
         provider = "openrouter"
         model_used = payload.model_used or analyser.model
         prompt_tokens = int(data.get("prompt_tokens") or 0)
@@ -190,6 +206,13 @@ def _build_insight(row: dict[str, Any], *, analyser: LlmAnalyser | None) -> dict
         summary = _deterministic_summary(title=title, description=description, category=category)
         key_facts = [item for item in [title[:180], description[:220]] if item]
         risk_flags = _parse_json_list(row.get("risk_flags_json"))
+        what_happened = summary
+        money_value_cr = None
+        market_cap_pct = None
+        time_horizon = _impact_horizon(category)
+        affected_segment = None
+        impact_direction = _deterministic_direction(category)
+        changes = _deterministic_change_flags(category)
         provider = "deterministic"
         model_used = "deterministic-event-summary"
         prompt_tokens = 0
@@ -198,9 +221,28 @@ def _build_insight(row: dict[str, Any], *, analyser: LlmAnalyser | None) -> dict
     insight_json = {
         "summary": summary,
         "key_facts": key_facts[:6],
-        "sentiment": "neutral",
+        "sentiment": impact_direction if impact_direction in {"positive", "negative", "neutral"} else "neutral",
+        "sentiment_label": impact_direction if impact_direction in {"positive", "negative", "neutral"} else "neutral",
         "risk_flags": risk_flags[:6],
-        "impact_horizon": _impact_horizon(category),
+        "what_happened": what_happened,
+        "money_value_cr": money_value_cr,
+        "market_cap_pct": market_cap_pct,
+        "time_horizon": time_horizon,
+        "impact_horizon": time_horizon,
+        "affected_segment": affected_segment,
+        "impact_direction": impact_direction,
+        "changes_earnings": changes["earnings"],
+        "changes_balance_sheet": changes["balance_sheet"],
+        "changes_ownership": changes["ownership"],
+        "changes_sentiment": changes["sentiment"],
+        "financials": {
+            key: value
+            for key, value in {
+                "money_value_cr": money_value_cr,
+                "market_cap_pct": market_cap_pct,
+            }.items()
+            if value is not None
+        },
         "source_ids": {
             "raw_event_id": row.get("raw_event_id"),
             "resolved_event_id": row.get("resolved_event_id"),
@@ -236,6 +278,30 @@ def _impact_horizon(category: str) -> str:
     if category in {"regulatory_legal", "management_change", "promoter_activity"}:
         return "monitor"
     return "unknown"
+
+
+def _deterministic_direction(category: str) -> str:
+    if category in {"regulatory_legal", "rating_downgrade", "insider_sell"}:
+        return "negative"
+    if category in {"capex_expansion", "mna_partnership", "fundraise", "major_order_win", "buyback", "rating_upgrade", "insider_buy"}:
+        return "positive"
+    return "neutral"
+
+
+def _deterministic_change_flags(category: str) -> dict[str, bool]:
+    return {
+        "earnings": category in {"results", "major_order_win", "capex_expansion"},
+        "balance_sheet": category in {"fundraise", "buyback", "capex_expansion"},
+        "ownership": category in {"sast_filing", "promoter_activity", "insider_buy", "insider_sell"},
+        "sentiment": category in {"regulatory_legal", "management_change", "rating_upgrade", "rating_downgrade", "major_order_win"},
+    }
+
+
+def _first_present(data: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if data.get(key) is not None:
+            return data.get(key)
+    return None
 
 
 def _parse_json_list(value: Any) -> list[str]:
