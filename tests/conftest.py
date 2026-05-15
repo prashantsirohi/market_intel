@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from market_intel.storage.db import Database
+from storage.db import Database
 
 
 @pytest.fixture

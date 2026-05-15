@@ -1,4 +1,4 @@
-from market_intel.processing.classifier import classify_category, classify_event
+from processing.classifier import classify_category, classify_event
 
 
 def test_demerger_classified_correctly():

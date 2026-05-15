@@ -1,6 +1,6 @@
 from datetime import date, timedelta
 
-from market_intel.processing.time_decay import compute_weight, is_within_lookback
+from processing.time_decay import compute_weight, is_within_lookback
 
 
 def test_weight_is_one_at_event_date():

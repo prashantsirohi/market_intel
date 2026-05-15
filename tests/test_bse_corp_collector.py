@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from market_intel.collectors.bse_corp import (
+from collectors.bse_corp import (
     BseCorporateCollector,
     parse_bse_announcements,
 )

@@ -1,6 +1,6 @@
 from datetime import date, datetime, timezone
 
-from market_intel.services.event_query_service import EventQueryService
+from services.event_query_service import EventQueryService
 
 
 def test_get_events_for_symbol_returns_seeded_event(seeded_db):

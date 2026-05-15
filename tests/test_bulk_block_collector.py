@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from market_intel.collectors.bulk_block import (
+from collectors.bulk_block import (
     NseBulkBlockCollector,
     parse_nse_deal_csv,
 )

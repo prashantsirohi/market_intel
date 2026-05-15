@@ -1,6 +1,6 @@
 import pytest
 
-from market_intel.processing.materiality import (
+from processing.materiality import (
     extract_deal_value_inr,
     score,
 )

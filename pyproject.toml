@@ -25,18 +25,18 @@ api = ["fastapi>=0.110", "uvicorn>=0.27"]
 test = ["pytest>=8.0", "pytest-cov>=4.1"]
 
 [project.scripts]
-market-intel = "market_intel.cli.main:main"
-market-intel-llm-enrich = "market_intel.jobs.run_llm_enrich:main"
+market-intel = "cli.main:main"
+market-intel-llm-enrich = "jobs.run_llm_enrich:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["market_intel*"]
+exclude = ["tests*"]
 
 [tool.setuptools.package-data]
-market_intel = ["storage/schema.sql", "storage/migrations/*.sql"]
+"*" = ["storage/schema.sql", "storage/migrations/*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import duckdb
 
-from market_intel.storage.db import Database
-from market_intel.storage.migrations import apply_migrations
+from storage.db import Database
+from storage.migrations import apply_migrations
 
 
 def test_apply_migrations_idempotent(in_memory_db):
