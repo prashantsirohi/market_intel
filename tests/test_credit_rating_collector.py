@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from market_intel.collectors.credit_rating import (
+from collectors.credit_rating import (
     CreditRatingCollector,
     RatingAction,
     RatingAgencyAdapter,

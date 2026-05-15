@@ -1,5 +1,5 @@
-from market_intel.processing.classifier import classify_event
-from market_intel.alerts.rules import decide_alert_level
+from processing.classifier import classify_event
+from alerts.rules import decide_alert_level
 
 
 def test_nav_is_ignored():

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from market_intel.collectors.sast import (
+from collectors.sast import (
     NseSastCollector,
     SAST_API_URL,
     SAST_PAGE_URL,

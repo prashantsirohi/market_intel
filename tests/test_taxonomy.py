@@ -1,4 +1,4 @@
-from market_intel.processing.taxonomy import (
+from processing.taxonomy import (
     TIER_A,
     TIER_B,
     category_importance,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from market_intel.services.collection_service import CollectionService
+from services.collection_service import CollectionService
 
 
 def test_duplicate_raw_event_returns_existing_without_update_error(in_memory_db):

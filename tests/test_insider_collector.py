@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from market_intel.collectors.insider import (
+from collectors.insider import (
     NseInsiderCollector,
     _classify_txn_type,
     parse_pit_rows,

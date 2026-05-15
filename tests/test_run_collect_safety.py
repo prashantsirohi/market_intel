@@ -3,8 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from market_intel.jobs import run_collect
-from market_intel.storage.db import Database
+from jobs import run_collect
+from storage.db import Database
 
 
 def _seed_db(path: Path) -> None:
