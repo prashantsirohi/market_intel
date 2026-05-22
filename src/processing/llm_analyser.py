@@ -22,6 +22,11 @@ class InsightPayload:
     eps: float | None = None
     revenue_yoy_pct: float | None = None
     pat_yoy_pct: float | None = None
+    revenue_qoq_pct: float | None = None
+    pat_qoq_pct: float | None = None
+    ebitda_cr: float | None = None
+    ebitda_yoy_pct: float | None = None
+    ebitda_qoq_pct: float | None = None
     capex_amount_cr: float | None = None
     order_value_cr: float | None = None
     dividend_per_share: float | None = None
@@ -60,6 +65,11 @@ class InsightPayload:
             "eps": self.eps,
             "revenue_yoy_pct": self.revenue_yoy_pct,
             "pat_yoy_pct": self.pat_yoy_pct,
+            "revenue_qoq_pct": self.revenue_qoq_pct,
+            "pat_qoq_pct": self.pat_qoq_pct,
+            "ebitda_cr": self.ebitda_cr,
+            "ebitda_yoy_pct": self.ebitda_yoy_pct,
+            "ebitda_qoq_pct": self.ebitda_qoq_pct,
             "capex_amount_cr": self.capex_amount_cr,
             "order_value_cr": self.order_value_cr,
             "dividend_per_share": self.dividend_per_share,
@@ -138,6 +148,11 @@ class LlmAnalyser:
             '  "eps": null,\n'
             '  "revenue_yoy_pct": null,\n'
             '  "pat_yoy_pct": null,\n'
+            '  "revenue_qoq_pct": null,\n'
+            '  "pat_qoq_pct": null,\n'
+            '  "ebitda_cr": null,\n'
+            '  "ebitda_yoy_pct": null,\n'
+            '  "ebitda_qoq_pct": null,\n'
             '  "capex_amount_cr": null,\n'
             '  "order_value_cr": null,\n'
             '  "dividend_per_share": null,\n'
@@ -256,6 +271,11 @@ class LlmAnalyser:
             eps=data.get("eps"),
             revenue_yoy_pct=data.get("revenue_yoy_pct"),
             pat_yoy_pct=data.get("pat_yoy_pct"),
+            revenue_qoq_pct=data.get("revenue_qoq_pct"),
+            pat_qoq_pct=data.get("pat_qoq_pct"),
+            ebitda_cr=data.get("ebitda_cr"),
+            ebitda_yoy_pct=data.get("ebitda_yoy_pct"),
+            ebitda_qoq_pct=data.get("ebitda_qoq_pct"),
             capex_amount_cr=data.get("capex_amount_cr"),
             order_value_cr=data.get("order_value_cr"),
             dividend_per_share=data.get("dividend_per_share"),
@@ -548,11 +568,23 @@ def build_insight(row: dict[str, Any], *, analyser: LlmAnalyser | None) -> dict[
         "changes_balance_sheet": changes["balance_sheet"],
         "changes_ownership": changes["ownership"],
         "changes_sentiment": changes["sentiment"],
+        "period_label": data.get("period_label") if should_call_llm else None,
         "financials": {
             key: value
             for key, value in {
                 "money_value_cr": money_value_cr,
                 "market_cap_pct": market_cap_pct,
+                "revenue_cr": data.get("revenue_cr") if should_call_llm else None,
+                "pat_cr": data.get("pat_cr") if should_call_llm else None,
+                "eps": data.get("eps") if should_call_llm else None,
+                "revenue_yoy_pct": data.get("revenue_yoy_pct") if should_call_llm else None,
+                "pat_yoy_pct": data.get("pat_yoy_pct") if should_call_llm else None,
+                "revenue_qoq_pct": data.get("revenue_qoq_pct") if should_call_llm else None,
+                "pat_qoq_pct": data.get("pat_qoq_pct") if should_call_llm else None,
+                "ebitda_cr": data.get("ebitda_cr") if should_call_llm else None,
+                "ebitda_yoy_pct": data.get("ebitda_yoy_pct") if should_call_llm else None,
+                "ebitda_qoq_pct": data.get("ebitda_qoq_pct") if should_call_llm else None,
+                "period_label": data.get("period_label") if should_call_llm else None,
             }.items()
             if value is not None
         },

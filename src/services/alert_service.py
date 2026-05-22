@@ -73,6 +73,8 @@ class AlertService:
             payload["key_facts"] = insight.get("key_facts") or []
             payload["sentiment"] = insight.get("sentiment") or "neutral"
             payload["risk_flags"] = insight.get("risk_flags") or []
+            payload["financials"] = insight.get("financials") or {}
+            payload["period_label"] = insight.get("period_label")
 
         alert_id = self.alert_repo.create_pending(resolved_event["resolved_event_id"], channel, payload)
         try:
@@ -104,6 +106,71 @@ class AlertService:
                 "",
                 f"📝 <b>Summary:</b> {payload.get('summary')}",
             ]
+            
+            category = payload.get("category")
+            financials = payload.get("financials", {})
+            if category == "results" and financials:
+                rev = financials.get("revenue_cr")
+                pat = financials.get("pat_cr")
+                ebitda = financials.get("ebitda_cr")
+                eps = financials.get("eps")
+                period = financials.get("period_label") or payload.get("period_label") or ""
+                
+                rev_yoy = financials.get("revenue_yoy_pct")
+                rev_qoq = financials.get("revenue_qoq_pct")
+                pat_yoy = financials.get("pat_yoy_pct")
+                pat_qoq = financials.get("pat_qoq_pct")
+                ebitda_yoy = financials.get("ebitda_yoy_pct")
+                ebitda_qoq = financials.get("ebitda_qoq_pct")
+                
+                def format_metric(label, value_cr, yoy_pct, qoq_pct):
+                    if value_cr is None:
+                        return None
+                    try:
+                        val_formatted = f"₹{float(value_cr):,.2f} Cr"
+                    except (ValueError, TypeError):
+                        val_formatted = f"₹{value_cr} Cr"
+                    parts = [f"• <b>{label}:</b> {val_formatted}"]
+                    
+                    comp_parts = []
+                    if yoy_pct is not None:
+                        try:
+                            yoy_val = float(yoy_pct)
+                            trend = "🟢" if yoy_val > 0 else "🔴" if yoy_val < 0 else "⚪"
+                            sign = "+" if yoy_val > 0 else ""
+                            comp_parts.append(f"{trend} {sign}{yoy_val:.1f}% YoY")
+                        except (ValueError, TypeError):
+                            pass
+                    if qoq_pct is not None:
+                        try:
+                            qoq_val = float(qoq_pct)
+                            trend = "🟢" if qoq_val > 0 else "🔴" if qoq_val < 0 else "⚪"
+                            sign = "+" if qoq_val > 0 else ""
+                            comp_parts.append(f"{trend} {sign}{qoq_val:.1f}% QoQ")
+                        except (ValueError, TypeError):
+                            pass
+                    if comp_parts:
+                        parts.append(f" ({' | '.join(comp_parts)})")
+                    return "".join(parts)
+
+                perf_lines = []
+                r_line = format_metric("Revenue", rev, rev_yoy, rev_qoq)
+                if r_line: perf_lines.append(r_line)
+                eb_line = format_metric("EBITDA", ebitda, ebitda_yoy, ebitda_qoq)
+                if eb_line: perf_lines.append(eb_line)
+                p_line = format_metric("Net Profit (PAT)", pat, pat_yoy, pat_qoq)
+                if p_line: perf_lines.append(p_line)
+                if eps is not None:
+                    try:
+                        eps_formatted = f"₹{float(eps):,.2f}"
+                    except (ValueError, TypeError):
+                        eps_formatted = f"₹{eps}"
+                    perf_lines.append(f"• <b>EPS:</b> {eps_formatted}")
+
+                if perf_lines:
+                    p_hdr = f" ({period})" if period else ""
+                    lines.append(f"\n📊 <b>Financial Performance{p_hdr}:</b>")
+                    lines.extend(perf_lines)
             
             key_facts = payload.get("key_facts", [])
             if key_facts:

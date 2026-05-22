@@ -210,3 +210,56 @@ def test_inline_enrichment_handles_llm_exception_fallback(seeded_db):
     assert insight["provider"] == "deterministic"
     assert insight["model_used"] == "deterministic-event-summary"
 
+
+def test_results_alert_formatting_with_comparison_table(seeded_db):
+    with seeded_db.get_connection() as conn:
+        raw_id = conn.execute("SELECT raw_event_id FROM raw_event WHERE event_hash = 'hash-reliance-001'").fetchone()[0]
+        
+    # Upsert a detailed results insight
+    seeded_db.llm_insight_repo().upsert(raw_id, {
+        "summary": "Reliance Q4 results show strong growth.",
+        "key_facts": ["Revenue up YoY", "Margins expand"],
+        "sentiment": "positive",
+        "risk_flags": [],
+        "model_used": "gpt-4o-mini",
+        "provider": "openrouter",
+        "period_label": "Q4FY26",
+        "financials": {
+            "revenue_cr": 150000.0,
+            "revenue_yoy_pct": 12.5,
+            "revenue_qoq_pct": 5.2,
+            "pat_cr": 18000.0,
+            "pat_yoy_pct": 15.1,
+            "pat_qoq_pct": -2.5,
+            "ebitda_cr": 35000.0,
+            "ebitda_yoy_pct": 8.0,
+            "ebitda_qoq_pct": 1.2,
+            "eps": 25.50
+        }
+    })
+    
+    alert_repo = MockAlertRepo()
+    telegram = MockTelegramClient()
+    svc = AlertService(alert_repo, telegram, dry_run=False, db=seeded_db)
+    
+    resolved_event = {
+        "resolved_event_id": 201,
+        "raw_event_id": raw_id,
+        "symbol": "RELIANCE",
+        "primary_category": "results",
+        "alert_level": "critical",
+        "summary_text": "Reliance Q4 FY26 Results",
+    }
+    
+    svc.send_if_needed(resolved_event)
+    assert len(telegram.sent_messages) == 1
+    msg = telegram.sent_messages[0]
+    
+    # Assertions on HTML rendering structure
+    assert "📊 <b>Financial Performance (Q4FY26):</b>" in msg
+    assert "• <b>Revenue:</b> ₹150,000.00 Cr (🟢 +12.5% YoY | 🟢 +5.2% QoQ)" in msg
+    assert "• <b>EBITDA:</b> ₹35,000.00 Cr (🟢 +8.0% YoY | 🟢 +1.2% QoQ)" in msg
+    assert "• <b>Net Profit (PAT):</b> ₹18,000.00 Cr (🟢 +15.1% YoY | 🔴 -2.5% QoQ)" in msg
+    assert "• <b>EPS:</b> ₹25.50" in msg
+
+
