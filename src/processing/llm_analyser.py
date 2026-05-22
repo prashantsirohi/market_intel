@@ -107,16 +107,9 @@ class LlmAnalyser:
 
         prompt = self._build_prompt(filing_title, symbol, nse_category, extracted_text)
         
-        try:
-            response = self._call_llm(prompt)
-            payload = self._parse_response(response, filing_title)
-            return payload
-        except Exception as e:
-            logger.error(f"LLM analysis failed: {e}")
-            return InsightPayload(
-                one_line_summary=filing_title[:120],
-                model_used=self.model,
-            )
+        response = self._call_llm(prompt)
+        payload = self._parse_response(response, filing_title)
+        return payload
 
     def _build_prompt(self, title: str, symbol: str, category: str | None, text: str) -> tuple[str, str]:
         system_prompt = (
@@ -126,11 +119,13 @@ class LlmAnalyser:
             "Do NOT use markdown code fences. Do NOT add explanations."
         )
 
+        filtered_text = filter_high_value_pages(text, category or "general", max_chars=16000)
+
         user_prompt = (
             f"Filing: {title}\n"
             f"Symbol: {symbol}\n"
             f"Category: {category or 'N/A'}\n\n"
-            f"Extracted Text (first 4000 chars):\n{text[:4000]}\n\n"
+            f"Extracted Text (smart page filter):\n{filtered_text}\n\n"
             "Respond with ONLY a JSON object matching this schema:\n"
             "{\n"
             '  "primary_category": "results"|"dividend"|"buyback"|"capex_expansion"|"management_change"|"rights_issue"|"merger"|"regulatory"|"other",\n'
@@ -336,3 +331,299 @@ def recalculate_importance(insight: InsightPayload, base_importance: float) -> f
         score += 1.0
 
     return min(score, 10.0)
+
+
+import re
+from datetime import timezone
+from processing.taxonomy import IGNORE_CATEGORIES, PDF_LLM_CATEGORIES
+
+
+def filter_high_value_pages(text: str, category: str, max_chars: int = 12000) -> str:
+    page_splitter = re.compile(r"--- PAGE BREAK \[Page (\d+)\] ---")
+    parts = page_splitter.split(text)
+    
+    if len(parts) < 3:
+        return text[:max_chars]
+        
+    pages = []
+    if parts[0].strip():
+        pages.append((0, parts[0]))
+        
+    for i in range(1, len(parts), 2):
+        try:
+            page_num = int(parts[i])
+        except ValueError:
+            page_num = i // 2 + 1
+        page_text = parts[i+1] if i+1 < len(parts) else ""
+        pages.append((page_num, page_text))
+        
+    if not pages:
+        return text[:max_chars]
+        
+    scored_pages = []
+    fin_keywords = ["₹", "rs.", "crore", "lakh", "revenue", "profit", "loss", "pat", "ebitda", "income", "sales", "consolidated", "standalone"]
+    cat_keywords_map = {
+        "results": ["financial results", "statement", "quarter ended", "particulars", "audited", "unaudited", "revenue from operations", "net profit"],
+        "management_change": ["resignation", "appointment", "appointed", "resigned", "ceo", "cfo", "md", "director", "managing director", "chief financial officer", "chief executive officer"],
+        "regulatory_legal": ["sebi", "nclt", "penalty", "gst", "demand", "show cause", "litigation", "order", "regulation"],
+        "buyback": ["buyback", "tender", "repurchase", "shares", "promoter"],
+        "major_order_win": ["order win", "received order", "contract", "awarded", "loa", "letter of award", "work order", "purchase order"],
+        "capex_expansion": ["capex", "capacity", "expansion", "new plant", "manufacturing", "facility", "project"],
+        "fundraise": ["raise", "qip", "issue", "allotment", "preferential", "ncd", "debenture", "warrants"],
+        "mna_partnership": ["acquisition", "merger", "partnership", "mou", "agreement", "joint venture", "jv"],
+    }
+    cat_kws = cat_keywords_map.get(category, [])
+    
+    for page_num, page_text in pages:
+        lower_text = page_text.lower()
+        score = 0.0
+        for kw in fin_keywords:
+            if kw in lower_text:
+                score += 1.0
+        for kw in cat_kws:
+            if kw in lower_text:
+                score += 3.0
+        num_digits = sum(c.isdigit() for c in page_text)
+        total_chars = len(page_text)
+        if total_chars > 0:
+            digit_ratio = num_digits / total_chars
+            score += digit_ratio * 10.0
+        scored_pages.append((page_num, page_text, score))
+        
+    selected_pages = []
+    current_len = 0
+    
+    first_page_num, first_page_text, _ = scored_pages[0]
+    selected_pages.append((first_page_num, first_page_text))
+    current_len += len(first_page_text)
+    
+    remaining_pages = scored_pages[1:]
+    remaining_pages.sort(key=lambda x: x[2], reverse=True)
+    
+    for page_num, page_text, score in remaining_pages:
+        if current_len + len(page_text) > max_chars:
+            if len(selected_pages) < 2 and current_len < max_chars:
+                slice_len = max_chars - current_len
+                selected_pages.append((page_num, page_text[:slice_len]))
+            break
+        selected_pages.append((page_num, page_text))
+        current_len += len(page_text)
+        
+    selected_pages.sort(key=lambda x: x[0])
+    output = []
+    for page_num, page_text in selected_pages:
+        output.append(f"--- PAGE BREAK [Page {page_num}] ---\n{page_text}")
+    return "\n".join(output)
+
+
+def enrich_event_with_llm(db: Any, raw_event_id: int, analyser: Optional[LlmAnalyser] = None) -> dict | None:
+    with db.get_connection(read_only=True) as conn:
+        row = conn.execute(
+            """
+            SELECT
+                r.raw_event_id,
+                re.resolved_event_id,
+                r.symbol,
+                r.company_name,
+                r.title,
+                r.description,
+                r.link,
+                r.attachment_url,
+                re.primary_category,
+                re.event_tier,
+                re.alert_level,
+                re.importance_score,
+                re.trust_score,
+                re.novelty_score,
+                re.risk_flags_json,
+                fd.document_id,
+                fd.extracted_text,
+                li.insight_id
+            FROM resolved_event re
+            JOIN raw_event r ON r.raw_event_id = re.raw_event_id
+            LEFT JOIN filing_document fd ON fd.raw_event_id = r.raw_event_id
+            LEFT JOIN llm_insight li ON li.raw_event_id = r.raw_event_id
+            WHERE r.raw_event_id = ?
+            """,
+            [raw_event_id],
+        ).fetchone()
+        if not row:
+            return None
+        cols = [item[0] for item in conn.description]
+        row_dict = dict(zip(cols, row))
+
+    insight = build_insight(row_dict, analyser=analyser)
+    if insight is not None:
+        db.llm_insight_repo().upsert(raw_event_id, insight)
+    return insight
+
+
+def build_insight(row: dict[str, Any], *, analyser: LlmAnalyser | None) -> dict[str, Any] | None:
+    from processing.taxonomy import IGNORE_CATEGORIES, PDF_LLM_CATEGORIES
+    from datetime import timezone
+    category = str(row.get("primary_category") or "general")
+    if category in IGNORE_CATEGORIES:
+        return None
+    title = str(row.get("title") or "").strip()
+    description = str(row.get("description") or "").strip()
+    text = str(row.get("extracted_text") or description or title)
+    should_call_llm = (
+        analyser is not None
+        and category in PDF_LLM_CATEGORIES
+        and len(text.strip()) >= 50
+    )
+
+    payload = None
+    if should_call_llm:
+        try:
+            payload = analyser.analyse(
+                extracted_text=text,
+                filing_title=title,
+                symbol=str(row.get("symbol") or ""),
+                nse_category=category,
+            )
+        except Exception as exc:
+            logger.warning(
+                "LLM analysis failed for event %s (symbol: %s): %s. Falling back to deterministic analysis.",
+                row.get("raw_event_id"), row.get("symbol"), exc
+            )
+            should_call_llm = False
+
+    if should_call_llm and payload is not None:
+        data = payload.to_dict()
+        summary = data.get("one_line_summary") or title[:160]
+        key_facts = data.get("key_highlights") or []
+        risk_flags = data.get("risk_flags") or _parse_json_list(row.get("risk_flags_json"))
+        what_happened = data.get("what_happened") or summary
+        money_value_cr = data.get("money_value_cr") or _first_present(
+            data,
+            "capex_amount_cr",
+            "order_value_cr",
+            "buyback_size_cr",
+        )
+        market_cap_pct = data.get("market_cap_pct")
+        time_horizon = data.get("time_horizon") or data.get("impact_horizon") or _impact_horizon(category)
+        affected_segment = data.get("affected_segment")
+        impact_direction = data.get("impact_direction") or data.get("sentiment") or "neutral"
+        changes = {
+            "earnings": bool(data.get("changes_earnings")),
+            "balance_sheet": bool(data.get("changes_balance_sheet")),
+            "ownership": bool(data.get("changes_ownership")),
+            "sentiment": bool(data.get("changes_sentiment")),
+        }
+        provider = "openrouter"
+        model_used = payload.model_used or analyser.model
+        prompt_tokens = int(data.get("prompt_tokens") or 0)
+        completion_tokens = int(data.get("completion_tokens") or 0)
+    else:
+        summary = _deterministic_summary(title=title, description=description, category=category)
+        key_facts = [item for item in [title[:180], description[:220]] if item]
+        risk_flags = _parse_json_list(row.get("risk_flags_json"))
+        what_happened = summary
+        money_value_cr = None
+        market_cap_pct = None
+        time_horizon = _impact_horizon(category)
+        affected_segment = None
+        impact_direction = _deterministic_direction(category)
+        changes = _deterministic_change_flags(category)
+        provider = "deterministic"
+        model_used = "deterministic-event-summary"
+        prompt_tokens = 0
+        completion_tokens = 0
+
+    insight_json = {
+        "summary": summary,
+        "key_facts": key_facts[:6],
+        "sentiment": impact_direction if impact_direction in {"positive", "negative", "neutral"} else "neutral",
+        "sentiment_label": impact_direction if impact_direction in {"positive", "negative", "neutral"} else "neutral",
+        "risk_flags": risk_flags[:6],
+        "what_happened": what_happened,
+        "money_value_cr": money_value_cr,
+        "market_cap_pct": market_cap_pct,
+        "time_horizon": time_horizon,
+        "impact_horizon": time_horizon,
+        "affected_segment": affected_segment,
+        "impact_direction": impact_direction,
+        "changes_earnings": changes["earnings"],
+        "changes_balance_sheet": changes["balance_sheet"],
+        "changes_ownership": changes["ownership"],
+        "changes_sentiment": changes["sentiment"],
+        "financials": {
+            key: value
+            for key, value in {
+                "money_value_cr": money_value_cr,
+                "market_cap_pct": market_cap_pct,
+            }.items()
+            if value is not None
+        },
+        "source_ids": {
+            "raw_event_id": row.get("raw_event_id"),
+            "resolved_event_id": row.get("resolved_event_id"),
+            "document_id": row.get("document_id"),
+        },
+        "category": category,
+        "alert_level": row.get("alert_level"),
+        "importance_score": row.get("importance_score"),
+        "trust_score": row.get("trust_score"),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    return {
+        "document_id": row.get("document_id"),
+        "model_used": model_used,
+        "provider": provider,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "insight_json": insight_json,
+        **insight_json,
+    }
+
+
+def _deterministic_summary(*, title: str, description: str, category: str) -> str:
+    base = title or description or "Corporate event"
+    return f"{category}: {base[:180]}"
+
+
+def _impact_horizon(category: str) -> str:
+    if category in {"results", "board_meeting", "dividend"}:
+        return "near_term"
+    if category in {"capex_expansion", "mna_partnership", "fundraise", "major_order_win"}:
+        return "medium_term"
+    if category in {"regulatory_legal", "management_change", "promoter_activity"}:
+        return "monitor"
+    return "unknown"
+
+
+def _deterministic_direction(category: str) -> str:
+    if category in {"regulatory_legal", "rating_downgrade", "insider_sell"}:
+        return "negative"
+    if category in {"capex_expansion", "mna_partnership", "fundraise", "major_order_win", "buyback", "rating_upgrade", "insider_buy"}:
+        return "positive"
+    return "neutral"
+
+
+def _deterministic_change_flags(category: str) -> dict[str, bool]:
+    return {
+        "earnings": category in {"results", "major_order_win", "capex_expansion"},
+        "balance_sheet": category in {"fundraise", "buyback", "capex_expansion"},
+        "ownership": category in {"sast_filing", "promoter_activity", "insider_buy", "insider_sell"},
+        "sentiment": category in {"regulatory_legal", "management_change", "rating_upgrade", "rating_downgrade", "major_order_win"},
+    }
+
+
+def _first_present(data: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if data.get(key) is not None:
+            return data.get(key)
+    return None
+
+
+def _parse_json_list(value: Any) -> list[str]:
+    if not value:
+        return []
+    try:
+        loaded = json.loads(value)
+    except (TypeError, ValueError):
+        return []
+    if isinstance(loaded, list):
+        return [str(item) for item in loaded if item]
+    return []

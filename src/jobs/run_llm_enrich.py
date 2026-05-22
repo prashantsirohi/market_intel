@@ -17,8 +17,7 @@ import sys
 from datetime import datetime, timezone
 from typing import Any
 
-from processing.llm_analyser import LlmAnalyser
-from processing.taxonomy import IGNORE_CATEGORIES, PDF_LLM_CATEGORIES
+from processing.llm_analyser import LlmAnalyser, build_insight
 from settings import settings
 from storage.db import Database
 
@@ -55,7 +54,7 @@ def main() -> int:
         )
         stats = {"candidates": len(candidates), "written": 0, "llm_used": 0, "deterministic": 0, "skipped": 0}
         for row in candidates:
-            insight = _build_insight(row, analyser=analyser)
+            insight = build_insight(row, analyser=analyser)
             if insight is None:
                 stats["skipped"] += 1
                 continue
@@ -145,7 +144,7 @@ def _load_candidates(db: Database, *, limit: int, priority_symbols: set[str]) ->
                  OR UPPER(COALESCE(r.symbol, '')) IN (SELECT UNNEST(?))
               )
             ORDER BY
-                CASE WHEN li.insight_id IS NULL THEN 0 ELSE 1 END,
+                CASE WHEN li.insight_id IS NULL OR li.provider = 'deterministic' THEN 0 ELSE 1 END,
                 CASE re.alert_level WHEN 'critical' THEN 0 WHEN 'important' THEN 1 ELSE 2 END,
                 COALESCE(re.importance_score, 0) DESC,
                 r.ingested_at DESC
@@ -157,163 +156,7 @@ def _load_candidates(db: Database, *, limit: int, priority_symbols: set[str]) ->
     return [dict(zip(cols, row)) for row in rows]
 
 
-def _build_insight(row: dict[str, Any], *, analyser: LlmAnalyser | None) -> dict[str, Any] | None:
-    category = str(row.get("primary_category") or "general")
-    if category in IGNORE_CATEGORIES:
-        return None
-    title = str(row.get("title") or "").strip()
-    description = str(row.get("description") or "").strip()
-    text = str(row.get("extracted_text") or description or title)
-    should_call_llm = (
-        analyser is not None
-        and category in PDF_LLM_CATEGORIES
-        and len(text.strip()) >= 50
-    )
-
-    if should_call_llm:
-        payload = analyser.analyse(
-            extracted_text=text,
-            filing_title=title,
-            symbol=str(row.get("symbol") or ""),
-            nse_category=category,
-        )
-        data = payload.to_dict()
-        summary = data.get("one_line_summary") or title[:160]
-        key_facts = data.get("key_highlights") or []
-        risk_flags = data.get("risk_flags") or _parse_json_list(row.get("risk_flags_json"))
-        what_happened = data.get("what_happened") or summary
-        money_value_cr = data.get("money_value_cr") or _first_present(
-            data,
-            "capex_amount_cr",
-            "order_value_cr",
-            "buyback_size_cr",
-        )
-        market_cap_pct = data.get("market_cap_pct")
-        time_horizon = data.get("time_horizon") or data.get("impact_horizon") or _impact_horizon(category)
-        affected_segment = data.get("affected_segment")
-        impact_direction = data.get("impact_direction") or data.get("sentiment") or "neutral"
-        changes = {
-            "earnings": bool(data.get("changes_earnings")),
-            "balance_sheet": bool(data.get("changes_balance_sheet")),
-            "ownership": bool(data.get("changes_ownership")),
-            "sentiment": bool(data.get("changes_sentiment")),
-        }
-        provider = "openrouter"
-        model_used = payload.model_used or analyser.model
-        prompt_tokens = int(data.get("prompt_tokens") or 0)
-        completion_tokens = int(data.get("completion_tokens") or 0)
-    else:
-        summary = _deterministic_summary(title=title, description=description, category=category)
-        key_facts = [item for item in [title[:180], description[:220]] if item]
-        risk_flags = _parse_json_list(row.get("risk_flags_json"))
-        what_happened = summary
-        money_value_cr = None
-        market_cap_pct = None
-        time_horizon = _impact_horizon(category)
-        affected_segment = None
-        impact_direction = _deterministic_direction(category)
-        changes = _deterministic_change_flags(category)
-        provider = "deterministic"
-        model_used = "deterministic-event-summary"
-        prompt_tokens = 0
-        completion_tokens = 0
-
-    insight_json = {
-        "summary": summary,
-        "key_facts": key_facts[:6],
-        "sentiment": impact_direction if impact_direction in {"positive", "negative", "neutral"} else "neutral",
-        "sentiment_label": impact_direction if impact_direction in {"positive", "negative", "neutral"} else "neutral",
-        "risk_flags": risk_flags[:6],
-        "what_happened": what_happened,
-        "money_value_cr": money_value_cr,
-        "market_cap_pct": market_cap_pct,
-        "time_horizon": time_horizon,
-        "impact_horizon": time_horizon,
-        "affected_segment": affected_segment,
-        "impact_direction": impact_direction,
-        "changes_earnings": changes["earnings"],
-        "changes_balance_sheet": changes["balance_sheet"],
-        "changes_ownership": changes["ownership"],
-        "changes_sentiment": changes["sentiment"],
-        "financials": {
-            key: value
-            for key, value in {
-                "money_value_cr": money_value_cr,
-                "market_cap_pct": market_cap_pct,
-            }.items()
-            if value is not None
-        },
-        "source_ids": {
-            "raw_event_id": row.get("raw_event_id"),
-            "resolved_event_id": row.get("resolved_event_id"),
-            "document_id": row.get("document_id"),
-        },
-        "category": category,
-        "alert_level": row.get("alert_level"),
-        "importance_score": row.get("importance_score"),
-        "trust_score": row.get("trust_score"),
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    return {
-        "document_id": row.get("document_id"),
-        "model_used": model_used,
-        "provider": provider,
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "insight_json": insight_json,
-        **insight_json,
-    }
-
-
-def _deterministic_summary(*, title: str, description: str, category: str) -> str:
-    base = title or description or "Corporate event"
-    return f"{category}: {base[:180]}"
-
-
-def _impact_horizon(category: str) -> str:
-    if category in {"results", "board_meeting", "dividend"}:
-        return "near_term"
-    if category in {"capex_expansion", "mna_partnership", "fundraise", "major_order_win"}:
-        return "medium_term"
-    if category in {"regulatory_legal", "management_change", "promoter_activity"}:
-        return "monitor"
-    return "unknown"
-
-
-def _deterministic_direction(category: str) -> str:
-    if category in {"regulatory_legal", "rating_downgrade", "insider_sell"}:
-        return "negative"
-    if category in {"capex_expansion", "mna_partnership", "fundraise", "major_order_win", "buyback", "rating_upgrade", "insider_buy"}:
-        return "positive"
-    return "neutral"
-
-
-def _deterministic_change_flags(category: str) -> dict[str, bool]:
-    return {
-        "earnings": category in {"results", "major_order_win", "capex_expansion"},
-        "balance_sheet": category in {"fundraise", "buyback", "capex_expansion"},
-        "ownership": category in {"sast_filing", "promoter_activity", "insider_buy", "insider_sell"},
-        "sentiment": category in {"regulatory_legal", "management_change", "rating_upgrade", "rating_downgrade", "major_order_win"},
-    }
-
-
-def _first_present(data: dict[str, Any], *keys: str) -> Any:
-    for key in keys:
-        if data.get(key) is not None:
-            return data.get(key)
-    return None
-
-
-def _parse_json_list(value: Any) -> list[str]:
-    if not value:
-        return []
-    try:
-        loaded = json.loads(value)
-    except (TypeError, ValueError):
-        return []
-    if isinstance(loaded, list):
-        return [str(item) for item in loaded if item]
-    return []
+# Deprecated duplicate helper functions. All event building logic is now in processing.llm_analyser.
 
 
 if __name__ == "__main__":

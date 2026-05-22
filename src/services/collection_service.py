@@ -387,7 +387,11 @@ class CollectionService:
                     summary["rss_new"] += 1
                     raw_event = result.get("raw_event")
                     if raw_event and getattr(raw_event, "attachment_url", None):
-                        self._process_pdf(raw_event, summary)
+                        from processing.taxonomy import needs_pdf_llm
+                        resolved = result.get("resolved") or {}
+                        category = resolved.get("primary_category") or "general"
+                        if needs_pdf_llm(category):
+                            self._process_pdf(raw_event, summary)
             except Exception as exc:
                 logger.warning("NSE RSS ingest failed for %s: %s", symbol, exc)
                 summary["failed"] += 1
@@ -417,7 +421,11 @@ class CollectionService:
                     summary["bse_corp_new"] += 1
                     raw_event = result.get("raw_event")
                     if raw_event and getattr(raw_event, "attachment_url", None):
-                        self._process_pdf(raw_event, summary, session=bse_session)
+                        from processing.taxonomy import needs_pdf_llm
+                        resolved = result.get("resolved") or {}
+                        category = resolved.get("primary_category") or "general"
+                        if needs_pdf_llm(category):
+                            self._process_pdf(raw_event, summary, session=bse_session)
             except Exception as exc:
                 logger.warning("BSE Corp ingest failed for %s: %s", item.symbol, exc)
                 summary["failed"] += 1
@@ -535,8 +543,10 @@ class CollectionService:
         try:
             from collectors.pdf_fetcher import PdfFetcher
             from processing.pdf_extractor import PdfExtractor
+            from processing.llm_analyser import LlmAnalyser, enrich_event_with_llm
+            from settings import settings
         except ImportError:
-            logger.warning("PDF fetcher/extractor not available")
+            logger.warning("PDF fetcher/extractor/LLM not available")
             return
 
         try:
@@ -587,6 +597,17 @@ class CollectionService:
                 "PDF extracted for event %s: %d chars via %s",
                 raw_event_id, extracted.char_count, extracted.extraction_method,
             )
+
+            # Trigger inline LLM enrichment immediately
+            analyser = None
+            if settings.openrouter_configured:
+                analyser = LlmAnalyser(
+                    api_key=settings.openrouter_api_key,
+                    model=settings.openrouter_model,
+                    base_url=settings.openrouter_base_url,
+                    max_tokens=settings.openrouter_max_tokens,
+                )
+            enrich_event_with_llm(self.db, raw_event_id, analyser=analyser)
 
         except Exception as exc:
             logger.error("PDF processing failed for event %s: %s", raw_event_id, exc)
@@ -642,7 +663,7 @@ class AlertScheduler:
                 logger.warning("Telegram not configured: %s", exc)
 
         alert_repo = self.db.alert_log_repo()
-        svc = AlertService(alert_repo, telegram, dry_run=(telegram is None))
+        svc = AlertService(alert_repo, telegram, dry_run=(telegram is None), db=self.db)
 
         resolved_repo = self.db.resolved_event_repo()
         criticals = resolved_repo.list_by_alert_level("critical", limit=50)

@@ -44,7 +44,20 @@ def needs_ocr(text: str) -> bool:
 
 def _needs_table_extraction(doc: dict) -> bool:
     text = " ".join(p.get("text", "") for p in doc.get("pages", []))
-    return "₹" in text or "Rs." in text or "Table" in text or "," in text
+    lower_text = text.lower()
+    
+    if any(sym in text for sym in ["₹", "Rs.", "INR"]):
+        return True
+        
+    keywords = [
+        "crore", "lakh", "consolidated", "standalone", "balance sheet", 
+        "profit & loss", "cash flow", "financial results", "particulars",
+        "table", "schedule", "annexure", "segment"
+    ]
+    if any(kw in lower_text for kw in keywords):
+        return True
+        
+    return False
 
 
 class PdfExtractor:
@@ -109,7 +122,7 @@ class PdfExtractor:
                     "text": text,
                     "blocks": blocks,
                 })
-                full_text_parts.append(text)
+                full_text_parts.append(f"--- PAGE BREAK [Page {page_num + 1}] ---\n{text}")
             
             return {
                 "total_pages": len(doc),
@@ -138,7 +151,7 @@ class PdfExtractor:
                         "page": page_num + 1,
                         "text": text,
                     })
-                    full_text_parts.append(text)
+                    full_text_parts.append(f"--- PAGE BREAK [Page {page_num + 1}] ---\n{text}")
                 
                 return {
                     "total_pages": len(pdf.pages),
@@ -194,7 +207,7 @@ class PdfExtractor:
                 img = Image.open(io.BytesIO(img_data))
                 
                 text = pytesseract.image_to_string(img)
-                text_parts.append(text)
+                text_parts.append(f"--- PAGE BREAK [Page {page_num + 1}] ---\n{text}")
             
             return "\n".join(text_parts)
         except ImportError:
