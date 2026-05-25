@@ -145,6 +145,109 @@ def add_entity(args: argparse.Namespace) -> int:
         db.close()
 
 
+def parse_screener(args: argparse.Namespace) -> int:
+    import json
+    import traceback
+    from collectors.screener import ScreenerClient
+    from settings import settings
+
+    client = ScreenerClient(
+        username=args.username,
+        password=args.password,
+        data_dir=settings.data_dir,
+    )
+
+    try:
+        if args.file:
+            logger.info("Parsing local file: %s", args.file)
+            data = client.parse_excel(args.file)
+        elif args.ticker:
+            logger.info("Downloading and parsing ticker: %s", args.ticker)
+            data = client.fetch_company_data(args.ticker, force_download=args.force)
+            
+            # Persist to database
+            from storage.financials_db import FinancialsDatabase
+            db_path = str(Path(settings.data_dir) / "screener_financials.db")
+            fin_db = FinancialsDatabase(db_path)
+            fin_db.save_company_financials(args.ticker, data)
+        else:
+            logger.error("Either --ticker or --file must be specified")
+            return 1
+
+        if args.output:
+            output_path = Path(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, default=str)
+            logger.info("Saved parsed data to %s", output_path)
+        else:
+            metadata = data.get("metadata", {})
+            print("\n=== Company Financials Summary ===")
+            print(f"Company Name: {metadata.get('company_name')}")
+            print(f"Latest Version: {metadata.get('latest_version')}")
+            print(f"Current Price: Rs. {metadata.get('current_price')}")
+            print(f"Market Cap: Cr. {metadata.get('market_cap_cr')}")
+            print(f"Face Value: {metadata.get('face_value')}")
+
+            # Print latest years Profit & Loss
+            pl = data.get("profit_loss", {})
+            sales = pl.get("Sales", {})
+            net_profit = pl.get("Net profit", {})
+            if sales:
+                sorted_dates = sorted(sales.keys())
+                print("\nHistorical Annual Sales & Net Profit:")
+                print(f"{'Date':<15} | {'Sales (Cr.)':<15} | {'Net Profit (Cr.)':<15}")
+                print("-" * 53)
+                for d in sorted_dates:
+                    s_val = sales.get(d)
+                    p_val = net_profit.get(d)
+                    print(f"{d:<15} | {str(s_val):<15} | {str(p_val):<15}")
+
+            # Print latest Quarters Sales
+            quarters = data.get("quarters", {})
+            q_sales = quarters.get("Sales", {})
+            q_np = quarters.get("Net profit", {})
+            if q_sales:
+                sorted_q_dates = sorted(q_sales.keys())
+                print("\nRecent Quarterly Sales & Net Profit:")
+                print(f"{'Date':<15} | {'Sales (Cr.)':<15} | {'Net Profit (Cr.)':<15}")
+                print("-" * 53)
+                for d in sorted_q_dates:
+                    s_val = q_sales.get(d)
+                    p_val = q_np.get(d)
+                    print(f"{d:<15} | {str(s_val):<15} | {str(p_val):<15}")
+            print()
+
+        return 0
+    except Exception as exc:
+        logger.error("Screener parsing failed: %s", exc)
+        traceback.print_exc()
+        return 1
+
+
+def sync_screener(args: argparse.Namespace) -> int:
+    from jobs.sync_screener import run_sync
+    from settings import settings
+
+    db_path = args.db_path or str(Path(settings.data_dir) / "screener_financials.db")
+    master_db_path = args.master_db_path or str(Path(settings.data_dir) / "masterdata.db")
+
+    try:
+        run_sync(
+            limit=args.limit,
+            force=args.force,
+            db_path=db_path,
+            master_db_path=master_db_path,
+            username=args.username,
+            password=args.password,
+            throttle_sec=args.throttle,
+        )
+        return 0
+    except Exception as exc:
+        logger.error("Sync screener failed: %s", exc)
+        return 1
+
+
 def migrate(args: argparse.Namespace) -> int:
     db = Database(args.db_path)
     try:
@@ -200,6 +303,25 @@ def main(argv: list[str] | None = None) -> int:
 
     migrate_parser = subparsers.add_parser("migrate", help="Apply schema migrations")
     migrate_parser.set_defaults(func=migrate)
+
+    screener_parser = subparsers.add_parser("parse-screener", help="Download and/or parse Screener.in company financials")
+    screener_parser.add_argument("--ticker", help="Stock ticker (e.g. GOKEX)")
+    screener_parser.add_argument("--file", help="Path to local Screener excel file to parse")
+    screener_parser.add_argument("--output", help="Path to write parsed JSON output")
+    screener_parser.add_argument("--force", action="store_true", help="Force download even if file exists")
+    screener_parser.add_argument("--username", help="Screener.in username (overrides env / default)")
+    screener_parser.add_argument("--password", help="Screener.in password (overrides env / default)")
+    screener_parser.set_defaults(func=parse_screener)
+
+    sync_screener_parser = subparsers.add_parser("sync-screener", help="Batch sync Screener.in company financials using masterdata.db")
+    sync_screener_parser.add_argument("--limit", type=int, help="Limit the number of symbols to sync in this run")
+    sync_screener_parser.add_argument("--force", action="store_true", help="Force re-download even if already synced")
+    sync_screener_parser.add_argument("--db-path", help="Path to output SQLite financials database")
+    sync_screener_parser.add_argument("--master-db-path", help="Path to input SQLite masterdata database")
+    sync_screener_parser.add_argument("--username", help="Screener.in username (overrides env / default)")
+    sync_screener_parser.add_argument("--password", help="Screener.in password (overrides env / default)")
+    sync_screener_parser.add_argument("--throttle", type=float, default=2.0, help="Throttle delay in seconds between requests")
+    sync_screener_parser.set_defaults(func=sync_screener)
 
     args = parser.parse_args(argv)
 
