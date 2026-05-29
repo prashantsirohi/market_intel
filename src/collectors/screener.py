@@ -20,8 +20,13 @@ class ScreenerClient:
         data_dir: str = "./data",
         storage_state_path: str | None = None,
     ):
-        self.username = username or os.environ.get("SCREENER_USERNAME", "prashant.sirohi1981@gmail.com")
-        self.password = password or os.environ.get("SCREENER_PASSWORD", "Dio0709$")
+        self.username = username or os.environ.get("SCREENER_USERNAME")
+        self.password = password or os.environ.get("SCREENER_PASSWORD")
+        if not self.username or not self.password:
+            raise ValueError(
+                "Screener username and password must be provided or set via "
+                "SCREENER_USERNAME and SCREENER_PASSWORD environment variables."
+            )
         self.data_dir = Path(data_dir)
         self.exports_dir = self.data_dir / "exports"
         self.exports_dir.mkdir(parents=True, exist_ok=True)

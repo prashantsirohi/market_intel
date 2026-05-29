@@ -23,6 +23,7 @@ from collectors.corporate_filings import (
     TemporaryNseApiError as LegacyTemporaryNseApiError,
 )
 from collectors.screener import ScreenerClient
+from collectors.fetch_corporate_actions import NseCorporateActionsCollector
 
 __all__ = [
     "NseRssClient",
@@ -39,4 +40,5 @@ __all__ = [
     "PdfFetchResult",
     "CorpFiling",
     "ScreenerClient",
+    "NseCorporateActionsCollector",
 ]
