@@ -26,9 +26,13 @@ def collect(args: argparse.Namespace) -> int:
         summary = service.run_collection()
 
         logger.info("Collection complete:")
-        logger.info("  RSS processed: %d", summary["rss_processed"])
-        logger.info("  API processed: %d", summary["api_processed"])
-        logger.info("  Total: %d", summary["total"])
+        logger.info("  RSS processed: %d", summary.get("rss_processed", 0))
+        logger.info("  BSE Corp new: %d", summary.get("bse_corp_new", 0))
+        logger.info("  Bulk Deal new: %d", summary.get("bulk_deal_new", 0))
+        logger.info("  SAST new: %d", summary.get("sast_new", 0))
+        logger.info("  Insider trade new: %d", summary.get("insider_new", 0))
+        logger.info("  Rating change new: %d", summary.get("rating_new", 0))
+        logger.info("  Total: %d", summary.get("total", 0))
 
         return 0
     except Exception as exc:

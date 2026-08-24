@@ -47,12 +47,16 @@ class EventIngestService:
                 source_type=source_type,
                 external_id=item.get("guid"),
                 symbol=item.get("symbol"),
+                isin=item.get("isin"),
+                company_name=item.get("company_name"),
                 title=item.get("title"),
+                category_desc=item.get("category_desc"),
                 event_date=item.get("pub_date"),
+                published_at=item.get("published_at") or item.get("pub_date"),
                 link=item.get("link"),
                 attachment_url=item.get("attachment_url"),
                 description=item.get("description"),
-                raw_payload=item,
+                raw_payload=item.get("raw_payload") or item,
             )
         except Exception as e:
             logger.error(f"Insert failed: {e}")

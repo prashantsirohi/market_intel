@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from collectors.bse_corp import (
@@ -33,7 +34,8 @@ SAMPLE_PAYLOAD = {
         },
         # Should be skipped (no headline)
         {"NEWSID": "ghi-789", "SCRIP_CD": "0", "HEADLINE": ""},
-    ]
+    ],
+    "Table1": [{"ROWCNT": 2}],
 }
 
 
@@ -41,7 +43,7 @@ def test_parse_extracts_two_announcements():
     items = parse_bse_announcements(SAMPLE_PAYLOAD)
     assert len(items) == 2
     rel = items[0]
-    assert rel.symbol == "RELIANCE"
+    assert rel.symbol == "500325"
     assert "Capex" in rel.title
     assert rel.attachment_url is not None
     assert "abc-123.pdf" in rel.attachment_url
@@ -52,7 +54,7 @@ def test_parse_extracts_two_announcements():
 def test_parse_handles_alt_datetime_format():
     items = parse_bse_announcements(SAMPLE_PAYLOAD)
     tcs = items[1]
-    assert tcs.symbol == "TCS"
+    assert tcs.symbol == "532540"
     assert tcs.published_at is not None
 
 
@@ -89,10 +91,18 @@ class _FakeHttp:
         return _FakeResponse(self._payload)
 
 
+def test_collector_accepts_double_encoded_json():
+    import json
+
+    http = _FakeHttp(json.dumps(SAMPLE_PAYLOAD))
+    items = BseCorporateCollector(http=http).fetch_window(date(2026, 8, 21), date(2026, 8, 21))  # type: ignore[arg-type]
+    assert len(items) == 2
+
+
 def test_collector_fetch_all():
     http = _FakeHttp(SAMPLE_PAYLOAD)
     collector = BseCorporateCollector(http=http)  # type: ignore[arg-type]
-    items = list(collector.fetch_all())
+    items = collector.fetch_window(date(2026, 8, 21), date(2026, 8, 21))
     assert len(items) == 2
     assert {it.source for it in items} == {"bse_corp"}
     # Confirm the date-range params were sent
@@ -100,3 +110,50 @@ def test_collector_fetch_all():
     sent_params = http.calls[0][1]
     assert sent_params is not None
     assert "strPrevDate" in sent_params and "strToDate" in sent_params
+    assert sent_params["pageno"] == 1
+    assert sent_params["subcategory"] == "-1"
+
+
+class _PagedHttp(_FakeHttp):
+    def get_or_raise(self, url: str, params: dict | None = None, **_: Any) -> _FakeResponse:
+        assert params is not None
+        self.calls.append((url, params))
+        page = int(params["pageno"])
+        row = dict(SAMPLE_PAYLOAD["Table"][0])
+        row["NEWSID"] = f"page-{page}"
+        row["TotalPageCnt"] = 2
+        return _FakeResponse({"Table": [row], "Table1": [{"ROWCNT": 2}]})
+
+
+def test_collector_fetches_every_reported_page():
+    http = _PagedHttp({})
+    collector = BseCorporateCollector(http=http)  # type: ignore[arg-type]
+    items = collector.fetch_window(date(2026, 8, 21), date(2026, 8, 21))
+    assert len(items) == 2
+    assert [call[1]["pageno"] for call in http.calls] == [1, 2]
+    assert collector.last_page_count == 2
+    assert collector.last_pages_complete is True
+    assert collector.last_failures == []
+
+
+class _DailyHttp(_FakeHttp):
+    def get_or_raise(self, url: str, params: dict | None = None, **_: Any) -> _FakeResponse:
+        assert params is not None
+        self.calls.append((url, params))
+        requested_date = params["strPrevDate"]
+        assert params["strToDate"] == requested_date
+        row = dict(SAMPLE_PAYLOAD["Table"][0])
+        row["NEWSID"] = f"news-{requested_date}"
+        row["TotalPageCnt"] = 1
+        return _FakeResponse({"Table": [row], "Table1": [{"ROWCNT": 1}]})
+
+
+def test_collector_splits_multi_day_window_into_daily_requests():
+    http = _DailyHttp({})
+    collector = BseCorporateCollector(http=http)  # type: ignore[arg-type]
+    items = collector.fetch_window(date(2026, 8, 19), date(2026, 8, 21))
+
+    assert len(items) == 3
+    assert [call[1]["strPrevDate"] for call in http.calls] == ["20260819", "20260820", "20260821"]
+    assert collector.last_page_count == 3
+    assert collector.last_pages_complete is True

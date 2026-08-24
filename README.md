@@ -11,6 +11,8 @@ Standalone market intelligence monitoring system for NSE (National Stock Exchang
 - **Category Classification**: Automatic categorization (results, dividend, buyback, etc.)
 - **Alert Routing**: Intelligent alert routing with critical/important/info levels
 - **Telegram Alerts**: Optional Telegram bot notifications
+- **Security master V1**: Audited official NSE/BSE active-listing snapshots joined by exact ISIN
+- **High-value shadow filter**: Versioned metadata-first NSE/BSE routing with coverage receipts and selective attachment eligibility
 
 ## Installation
 
@@ -56,6 +58,112 @@ Tables:
 - `resolved_event` - Analyzed and categorized events
 - `filing_document` - Downloaded filing documents
 - `alert_log` - Alert delivery log
+- `announcement_collection_run` - Immutable source-window coverage receipts for the V1 shadow collector
+- `announcement_filter_decision` - Auditable `KEEP`, `FETCH_ATTACHMENT`, or `DROP_METADATA_ONLY` decisions
+- `listing_sync_run` - Immutable per-exchange listing-master sync receipts
+- `listed_security_observation` - Normalized listing observations with source-row hashes
+- `listed_security_current` - Latest completed NSE/BSE observations per exchange
+- `security_listing_membership_current` - Exact-ISIN `NSE_ONLY`, `BSE_ONLY`, and `DUAL` membership
+
+## Security master V1
+
+Synchronize the official active-equity masters before collecting announcements:
+
+```bash
+PYTHONPATH=src ./.venv/bin/python -m jobs.run_security_master_v1 sync \
+  --db-path ./data/market_intel.duckdb \
+  --effective-date YYYY-MM-DD \
+  --exchanges NSE,BSE
+```
+
+Inspect the latest completed cross-exchange snapshot without making network calls:
+
+```bash
+PYTHONPATH=src ./.venv/bin/python -m jobs.run_security_master_v1 report \
+  --db-path ./data/market_intel.duckdb
+```
+
+The master stores normalized identity metadata, source and row hashes, and sync
+coverage—not raw exchange files. `tracked_entity` remains an operator watchlist.
+Announcements are enriched by exact exchange identifier/ISIN; dual-listed BSE
+events receive their canonical NSE symbol while retaining BSE provenance. The
+official active lists are current snapshots with temporal trust
+`LATEST_ONLY_OBSERVED_AT_SYNC`; the sync CLI rejects a backdated effective date.
+
+## High-value filter V1
+
+Run a metadata-only shadow collection first. This stores every announcement's
+metadata and decision but downloads no PDFs and performs no LLM calls. The job
+fails fast unless every requested exchange has a completed security-master
+snapshot:
+
+```bash
+PYTHONPATH=src ./.venv/bin/python -m jobs.run_high_value_v1 collect \
+  --db-path ./data/market_intel.duckdb \
+  --from-date YYYY-MM-DD --to-date YYYY-MM-DD \
+  --sources nse_api,bse_corp
+```
+
+After reviewing the decision mix, add `--download-selected` to download and
+extract attachments only for `KEEP` and `FETCH_ATTACHMENT`. Shadow PDF
+processing never invokes the operational LLM enrichment path.
+
+Measure the frozen starter fixture with:
+
+```bash
+PYTHONPATH=src ./.venv/bin/python -m jobs.run_high_value_v1 calibrate \
+  --labels configs/high_value_filter_baseline_v1.json
+```
+
+The fixture is a smoke baseline, not evidence of production precision or
+recall. Replace or extend it with reviewed live announcement labels before
+promoting any rule successor.
+
+Export a deterministic live review set from exact completed collection runs:
+
+```bash
+PYTHONPATH=src ./.venv/bin/python -m jobs.run_high_value_v1 export-review \
+  --db-path ./data/market_intel.duckdb \
+  --collection-run-ids <nse-run-id>,<bse-run-id> \
+  --cohort-file /path/to/capex_baseline_v1.json \
+  --output /path/to/high-value-review-v1.json
+```
+
+The default export samples 50 `KEEP`, 50 `FETCH_ATTACHMENT`, and 100
+`DROP_METADATA_ONLY` decisions using deterministic source-and-membership
+strata, then adds every matching cohort announcement. It refuses incomplete
+receipts and existing output files. Reviewers replace each `expected: null`
+with `HIGH_VALUE` or `NOT_HIGH_VALUE`; the resulting file can be passed
+directly to the `calibrate` command. By default, calibration requires every
+case to be labeled. During review, `calibrate --allow-partial` measures only
+the labeled subset and reports label coverage; a partial result is diagnostic
+and cannot promote the policy.
+
+## J-curve targeted historical backfill V1
+
+The backfill reads only the completed `PRIMARY_RESEARCH` queue from an
+immutable research-screener discovery run. Each bounded chunk fetches complete
+NSE/BSE announcement metadata so its source coverage receipt remains truthful,
+then retains exact cohort ISIN/exchange identities before ingestion. The same
+high-value policy controls attachment downloads; no LLM is invoked. Chunks are
+newest-first, independently receipted, and resumable. Exact cross-listing
+duplicates use ISIN, publication date, and normalized title with NSE preferred.
+
+Preview the immutable plan without changing either database:
+
+```bash
+PYTHONPATH=src ./.venv/bin/python -m jobs.run_jcurve_backfill_v1 plan \
+  --research-store /path/to/research_screener/control_plane.duckdb \
+  --discovery-run-id <completed-jcurve-discovery-run-id> \
+  --from-date YYYY-MM-DD --to-date YYYY-MM-DD \
+  --sources nse_api,bse_corp --chunk-days 31
+```
+
+After backing up `market_intel.duckdb`, run or resume collection with the same
+arguments plus `--db-path`. Add `--download-selected` only when selected PDFs
+should be frozen. `--max-chunks 1` is the recommended live canary; rerunning the
+full command skips completed chunks. Inspect progress with the `status`
+subcommand and the returned `backfill_run_id`.
 
 ## Project Structure
 

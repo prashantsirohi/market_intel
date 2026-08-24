@@ -1,0 +1,17 @@
+{
+  "baseline_version": "market-intel-high-value-baseline-v1",
+  "cases": [
+    {"case_id":"capex-amount","subject":"Outcome of Board Meeting","details":"Board approved capex of INR 600 crore for capacity expansion.","attachment_url":"https://example.test/capex.pdf","expected":"HIGH_VALUE"},
+    {"case_id":"commissioning","subject":"General Updates","details":"Commercial production commenced at the new manufacturing facility.","attachment_url":"https://example.test/update.pdf","expected":"HIGH_VALUE"},
+    {"case_id":"successful-bidder","subject":"General Updates","details":"Company declared successful bidder under TBCB.","attachment_url":"https://example.test/loi.pdf","expected":"HIGH_VALUE"},
+    {"case_id":"acquisition-filename","subject":"General Updates","details":"General Updates","attachment_url":"https://example.test/update_on_Acquisition.pdf","expected":"HIGH_VALUE"},
+    {"case_id":"project-delay","subject":"Project Update","details":"Commissioning deferred due to a project delay and cost overrun.","attachment_url":"https://example.test/project.pdf","expected":"HIGH_VALUE"},
+    {"case_id":"agm","subject":"Shareholders meeting","details":"Proceedings of the annual general meeting.","attachment_url":"https://example.test/agm.pdf","expected":"NOT_HIGH_VALUE"},
+    {"case_id":"esop","subject":"ESOP/ESOS/ESPS","details":"Grant of employee stock options.","attachment_url":"https://example.test/esop.pdf","expected":"NOT_HIGH_VALUE"},
+    {"case_id":"allotment","subject":"Allotment of Securities","details":"Allotment of shares under employee plan.","attachment_url":"https://example.test/allotment.pdf","expected":"NOT_HIGH_VALUE"},
+    {"case_id":"newspaper","subject":"Copy of Newspaper Publication","details":"Publication of financial notice.","attachment_url":"https://example.test/news.pdf","expected":"NOT_HIGH_VALUE"},
+    {"case_id":"record-date","subject":"Record Date","details":"Record date for final dividend.","attachment_url":"https://example.test/record.pdf","expected":"NOT_HIGH_VALUE"},
+    {"case_id":"pit-plan","subject":"Trading Plan under PIT","details":"Trading plan under insider trading regulations.","attachment_url":"https://example.test/pit.pdf","expected":"NOT_HIGH_VALUE"},
+    {"case_id":"generic-no-file","subject":"General Updates","details":"The company informed the exchange about General Updates.","attachment_url":null,"expected":"NOT_HIGH_VALUE"}
+  ]
+}

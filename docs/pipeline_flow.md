@@ -1,5 +1,67 @@
 # NSE Corporate Filings Pipeline v2.1
 
+## Exchange-listing security master V1
+
+`market-intel-security-master-v1` acquires the official NSE active-equity CSV
+and BSE active-equity JSON list as independent, versioned source snapshots.
+Each source writes an immutable `listing_sync_run` receipt and normalized
+`listed_security_observation` rows with source-content and source-row hashes.
+The latest completed run is selected independently per exchange; a degraded
+refresh cannot replace a previously valid current snapshot. These official
+active lists are not historical masters: every receipt is explicitly marked
+`LATEST_ONLY_OBSERVED_AT_SYNC`, and the sync command rejects backdating.
+
+`security_listing_membership_current` joins active corporate-equity listings
+only by exact valid ISIN and reports `NSE_ONLY`, `BSE_ONLY`, or `DUAL`.
+`tracked_entity` remains a watchlist and is not a full security master. The
+high-value shadow collector uses the master to enrich announcement identity
+and provenance, but V1 does not suppress dual-listed BSE metadata before
+cross-exchange overlap and incremental coverage have been measured. Collection
+fails before any source request when a requested exchange has no completed
+master snapshot; a degraded refresh does not displace an older completed one.
+
+## High-value shadow lane V1
+
+`market-intel-high-value-filter-v1` is an isolated metadata-first lane over the
+official NSE announcement API and BSE corporate-announcement endpoint. Each
+bounded source window writes an `announcement_collection_run` coverage receipt
+and one immutable `announcement_filter_decision` per announcement. Decisions
+are `KEEP`, `FETCH_ATTACHMENT`, or `DROP_METADATA_ONLY`; they control attachment
+eligibility only and never assert a verified corporate fact.
+
+`market-intel-jcurve-targeted-backfill-v1` consumes a completed immutable
+research-screener primary queue by exact identity. It fetches full exchange
+metadata in at most 32-day chunks, retains only cohort announcements, applies
+the same high-value attachment gate, and writes resumable run/target/chunk
+receipts. Complete exchange responses—not the retained subset—establish source
+coverage. Cross-listed exact ISIN/date/normalized-title duplicates prefer NSE;
+all other official source events remain independently auditable.
+
+The default shadow command stores metadata and decisions without downloading
+attachments or calling an LLM. `--download-selected` fetches only eligible
+attachments and still suppresses operational LLM enrichment. A failed source
+window is persisted as `DEGRADED` with `pages_complete = FALSE`, rather than
+being treated as an empty successful day.
+
+BSE collection follows the current official `AnnSubCategoryGetData` contract.
+Because that endpoint silently returns an empty object for multi-day requests,
+the collector splits every requested range into single-day windows, records
+every response-page hash, and follows `Table1[0].ROWCNT` until all reported
+50-row pages have been acquired for every date. A malformed, failed, or
+repeated page leaves the window incomplete. Duplicate source announcement IDs
+are counted in the run summary but produce only one immutable filter decision
+and do not degrade an otherwise complete collection window.
+
+Calibration uses `export-review` over explicitly named completed collection
+runs. The immutable export records source receipts, population and sample
+mixes, deterministic seed, and dataset hash. Sampling round-robins across source
+and listing-membership strata for each decision, then unions every announcement
+matching an optional exact-ISIN cohort. Review labels remain null until a human
+assigns `HIGH_VALUE` or `NOT_HIGH_VALUE`; aggregate routing counts are not a
+substitute for precision and recall. Calibration rejects incomplete labeling by
+default. `--allow-partial` supports interim batch review, explicitly reports
+coverage and `PARTIAL` status, and is not promotion evidence.
+
 ```mermaid
 flowchart TD
     A[NSE RSS/API] --> B[fetch_all]

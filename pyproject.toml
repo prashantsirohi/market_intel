@@ -27,6 +27,9 @@ test = ["pytest>=8.0", "pytest-cov>=4.1"]
 [project.scripts]
 market-intel = "cli.main:main"
 market-intel-llm-enrich = "jobs.run_llm_enrich:main"
+market-intel-high-value-v1 = "jobs.run_high_value_v1:main"
+market-intel-security-master-v1 = "jobs.run_security_master_v1:main"
+market-intel-jcurve-backfill-v1 = "jobs.run_jcurve_backfill_v1:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

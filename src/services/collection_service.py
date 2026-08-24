@@ -270,7 +270,11 @@ def _route_rss_event(item: CollectorItem, ingest_svc: Any) -> dict:
         "description": item.description,
         "guid": item.external_id,
         "symbol": item.symbol,
+        "isin": item.isin,
+        "company_name": item.company_name,
+        "category_desc": item.raw_payload.get("category") or item.raw_payload.get("announcementType"),
         "attachment_url": item.attachment_url,
+        "raw_payload": item.raw_payload,
     }
     result = ingest_svc.process_rss_item(record)
     if result.get("status") == "new" and not result.get("raw_event"):
@@ -373,6 +377,8 @@ class CollectionService:
             summary["rss_processed"] += 1
             symbol = _extract_rss_symbol(item.title or "", item.description or "")
             record = {
+                "source": "nse_rss",
+                "source_type": "official",
                 "title": item.title,
                 "link": item.link,
                 "pub_date": item.pub_date,
@@ -380,6 +386,7 @@ class CollectionService:
                 "guid": getattr(item, "guid", getattr(item, "raw_guid", None)),
                 "symbol": symbol,
                 "attachment_url": getattr(item, "attachment_url", None),
+                "raw_payload": getattr(item, "raw", {}),
             }
             try:
                 result = ingest_svc.process_rss_item(record)
@@ -530,6 +537,7 @@ class CollectionService:
         summary: dict,
         *,
         session: Any = None,
+        enrich_llm: bool = True,
     ) -> None:
         """Fetch PDF from attachment_url, extract text, store in filing_document."""
         attachment_url = getattr(raw_event, "attachment_url", None)
@@ -599,15 +607,16 @@ class CollectionService:
             )
 
             # Trigger inline LLM enrichment immediately
-            analyser = None
-            if settings.openrouter_configured:
-                analyser = LlmAnalyser(
-                    api_key=settings.openrouter_api_key,
-                    model=settings.openrouter_model,
-                    base_url=settings.openrouter_base_url,
-                    max_tokens=settings.openrouter_max_tokens,
-                )
-            enrich_event_with_llm(self.db, raw_event_id, analyser=analyser)
+            if enrich_llm:
+                analyser = None
+                if settings.openrouter_configured:
+                    analyser = LlmAnalyser(
+                        api_key=settings.openrouter_api_key,
+                        model=settings.openrouter_model,
+                        base_url=settings.openrouter_base_url,
+                        max_tokens=settings.openrouter_max_tokens,
+                    )
+                enrich_event_with_llm(self.db, raw_event_id, analyser=analyser)
 
         except Exception as exc:
             logger.error("PDF processing failed for event %s: %s", raw_event_id, exc)
