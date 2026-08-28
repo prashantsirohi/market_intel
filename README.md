@@ -143,11 +143,12 @@ and cannot promote the policy.
 
 The backfill reads only the completed `PRIMARY_RESEARCH` queue from an
 immutable research-screener discovery run. Each bounded chunk fetches complete
-NSE/BSE announcement metadata so its source coverage receipt remains truthful,
-then retains exact cohort ISIN/exchange identities before ingestion. The same
-high-value policy controls attachment downloads; no LLM is invoked. Chunks are
-newest-first, independently receipted, and resumable. Exact cross-listing
-duplicates use ISIN, publication date, and normalized title with NSE preferred.
+metadata for the requested exchange so its source coverage receipt remains
+truthful, then retains exact cohort ISIN/exchange identities before ingestion.
+Request NSE for every NSE-listed cohort member and add BSE only when the frozen
+cohort contains a BSE-only member. Chunks are newest-first, independently
+receipted, and resumable. Exact cross-listing duplicates use ISIN, publication
+date, and normalized title with NSE preferred.
 
 Preview the immutable plan without changing either database:
 
@@ -160,10 +161,27 @@ PYTHONPATH=src ./.venv/bin/python -m jobs.run_jcurve_backfill_v1 plan \
 ```
 
 After backing up `market_intel.duckdb`, run or resume collection with the same
-arguments plus `--db-path`. Add `--download-selected` only when selected PDFs
-should be frozen. `--max-chunks 1` is the recommended live canary; rerunning the
-full command skips completed chunks. Inspect progress with the `status`
-subcommand and the returned `backfill_run_id`.
+arguments plus `--db-path`. `--max-chunks 1` is the recommended live canary;
+rerunning the full command skips completed chunks. Inspect progress with the
+`status` subcommand and the returned `backfill_run_id`.
+
+Once metadata is complete, download only attachments carrying a strong
+J-curve signal (`CAPEX`, `CAPACITY`, facility, commissioning, project finance,
+demand path, order award, or project-adverse evidence):
+
+```bash
+PYTHONPATH=src ./.venv/bin/python -m jobs.run_jcurve_backfill_v1 \
+  download-attachments \
+  --db-path /path/to/market_intel.duckdb \
+  --backfill-run-id <completed-backfill-run-id>
+```
+
+The attachment run is content-addressed, accepts only fetchable HTTP(S) URLs,
+checksum-validates existing files, stores new PDFs beside the configured
+database under `market_intel_pdfs/`, never invokes LLM enrichment, and is
+resumable with `--max-items`. It also repairs matching cohort events that were
+already present before the parent backfill and therefore deduplicated on insert;
+relative legacy file paths are redownloaded into the absolute external store.
 
 ## Project Structure
 

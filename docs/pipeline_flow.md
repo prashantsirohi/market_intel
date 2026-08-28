@@ -30,18 +30,26 @@ are `KEEP`, `FETCH_ATTACHMENT`, or `DROP_METADATA_ONLY`; they control attachment
 eligibility only and never assert a verified corporate fact.
 
 `market-intel-jcurve-targeted-backfill-v1` consumes a completed immutable
-research-screener primary queue by exact identity. It fetches full exchange
-metadata in at most 32-day chunks, retains only cohort announcements, applies
-the same high-value attachment gate, and writes resumable run/target/chunk
-receipts. Complete exchange responses—not the retained subset—establish source
-coverage. Cross-listed exact ISIN/date/normalized-title duplicates prefer NSE;
-all other official source events remain independently auditable.
+research-screener primary queue by exact identity. It fetches full metadata for
+each requested exchange in at most 32-day chunks, retains only cohort
+announcements, applies the same high-value attachment gate, and writes resumable
+run/target/chunk receipts. Complete exchange responses—not the retained
+subset—establish source coverage. Frozen cohorts use NSE as the primary source
+for every NSE-listed member and require BSE coverage only for a BSE-only member.
+Cross-listed exact ISIN/date/normalized-title duplicates prefer NSE; all other
+official source events remain independently auditable.
 
 The default shadow command stores metadata and decisions without downloading
-attachments or calling an LLM. `--download-selected` fetches only eligible
-attachments and still suppresses operational LLM enrichment. A failed source
-window is persisted as `DEGRADED` with `pages_complete = FALSE`, rather than
-being treated as an empty successful day.
+attachments or calling an LLM. After a completed metadata backfill,
+`download-attachments` selects only strong J-curve signals with fetchable
+HTTP(S) URLs, records a separate resumable attachment receipt, validates
+existing file hashes, stores new files beside the configured database, and
+suppresses operational LLM enrichment. Candidate selection covers both newly
+inserted rows and matching cohort events already present in the proven parent
+window. Relative legacy paths are not treated as reusable because their meaning
+depends on the caller's working directory. A
+failed source window is persisted as `DEGRADED` with
+`pages_complete = FALSE`, rather than being treated as an empty successful day.
 
 BSE collection follows the current official `AnnSubCategoryGetData` contract.
 Because that endpoint silently returns an empty object for multi-day requests,

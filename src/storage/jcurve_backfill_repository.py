@@ -114,6 +114,75 @@ class JCurveBackfillRepository:
         ]
         return payload
 
+    def start_attachment_run(self, payload: dict[str, Any]) -> bool:
+        with self.db.get_connection() as conn:
+            existing = conn.execute(
+                "SELECT status FROM jcurve_attachment_ingestion_run WHERE attachment_run_id = ?",
+                [payload["attachment_run_id"]],
+            ).fetchone()
+            if existing:
+                return False
+            conn.execute(
+                """INSERT INTO jcurve_attachment_ingestion_run (
+                   attachment_run_id, parent_backfill_run_id, policy_version,
+                   policy_hash, candidate_hash, status, candidate_count, started_at
+                ) VALUES (?, ?, ?, ?, ?, 'RUNNING', ?, ?)""",
+                [payload["attachment_run_id"], payload["parent_backfill_run_id"],
+                 payload["policy_version"], payload["policy_hash"],
+                 payload["candidate_hash"], payload["candidate_count"],
+                 payload["started_at"]],
+            )
+            self._refresh_attachment(conn, payload["attachment_run_id"])
+        return True
+
+    def attachment_item_complete(self, *, attachment_run_id: str, raw_event_id: int) -> bool:
+        with self.db.get_connection(read_only=True) as conn:
+            row = conn.execute(
+                """SELECT status FROM jcurve_attachment_ingestion_item
+                   WHERE attachment_run_id = ? AND raw_event_id = ?""",
+                [attachment_run_id, raw_event_id],
+            ).fetchone()
+        return bool(row and row[0] in {"VALID", "REUSED_VALID", "FAILED"})
+
+    def record_attachment_item(
+        self, *, attachment_run_id: str, candidate: dict[str, Any],
+        result: dict[str, Any],
+    ) -> None:
+        with self.db.get_connection() as conn:
+            conn.execute(
+                """INSERT INTO jcurve_attachment_ingestion_item VALUES (
+                   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT (attachment_run_id, raw_event_id) DO UPDATE SET
+                     status = excluded.status, document_id = excluded.document_id,
+                     content_hash = excluded.content_hash, file_size = excluded.file_size,
+                     error_message = excluded.error_message,
+                     completed_at = excluded.completed_at""",
+                [attachment_run_id, candidate["raw_event_id"], candidate["source"],
+                 candidate["attachment_url"], json.dumps(candidate["matched_signals"]),
+                 candidate["selection_reason"], result["status"],
+                 result.get("document_id"), result.get("content_hash"),
+                 result.get("file_size"), result.get("error_message"), datetime.now()],
+            )
+            self._refresh_attachment(conn, attachment_run_id)
+
+    def attachment_report(self, attachment_run_id: str) -> dict[str, Any]:
+        with self.db.get_connection(read_only=True) as conn:
+            row = conn.execute(
+                "SELECT * FROM jcurve_attachment_ingestion_run WHERE attachment_run_id = ?",
+                [attachment_run_id],
+            ).fetchone()
+            if not row:
+                raise ValueError(f"attachment ingestion run not found: {attachment_run_id}")
+            columns = [column[0] for column in conn.description]
+            statuses = conn.execute(
+                """SELECT status, count(*) FROM jcurve_attachment_ingestion_item
+                   WHERE attachment_run_id = ? GROUP BY status ORDER BY status""",
+                [attachment_run_id],
+            ).fetchall()
+        payload = dict(zip(columns, row))
+        payload["status_counts"] = {status: count for status, count in statuses}
+        return payload
+
     @staticmethod
     def _refresh(conn, backfill_run_id: str) -> None:
         counts = conn.execute(
@@ -142,4 +211,32 @@ class JCurveBackfillRepository:
                  status = ?, completed_at = ? WHERE backfill_run_id = ?""",
             [counts[0], counts[1], counts[2], counts[3], counts[4], status,
              completed_at, backfill_run_id],
+        )
+
+    @staticmethod
+    def _refresh_attachment(conn, attachment_run_id: str) -> None:
+        counts = conn.execute(
+            """SELECT count(*),
+                      count(*) FILTER (WHERE status IN ('VALID', 'REUSED_VALID')),
+                      count(*) FILTER (WHERE status = 'FAILED')
+               FROM jcurve_attachment_ingestion_item WHERE attachment_run_id = ?""",
+            [attachment_run_id],
+        ).fetchone()
+        candidate_count = conn.execute(
+            """SELECT candidate_count FROM jcurve_attachment_ingestion_run
+               WHERE attachment_run_id = ?""",
+            [attachment_run_id],
+        ).fetchone()[0]
+        completed_count = int(counts[0])
+        status = "RUNNING"
+        completed_at = None
+        if completed_count >= int(candidate_count):
+            status = "COMPLETED" if int(counts[2]) == 0 else "DEGRADED"
+            completed_at = datetime.now()
+        conn.execute(
+            """UPDATE jcurve_attachment_ingestion_run SET completed_count = ?,
+                 valid_count = ?, failed_count = ?, status = ?, completed_at = ?
+               WHERE attachment_run_id = ?""",
+            [completed_count, counts[1], counts[2], status, completed_at,
+             attachment_run_id],
         )

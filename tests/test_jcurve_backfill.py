@@ -64,6 +64,37 @@ def test_exact_target_retention_and_cross_listing_fingerprint():
     )
 
 
+def test_attachment_selection_requires_jcurve_specific_signal():
+    assert "CAPEX" in backfill.JCURVE_ATTACHMENT_SIGNALS
+    assert "CORPORATE_TRANSACTION" not in backfill.JCURVE_ATTACHMENT_SIGNALS
+
+
+def test_attachment_url_must_be_fetchable_http_url():
+    assert backfill._is_http_url("https://example.com/filing.pdf")
+    assert backfill._is_http_url("http://example.com/filing.pdf")
+    assert not backfill._is_http_url("-")
+    assert not backfill._is_http_url("/relative/filing.pdf")
+
+
+def test_document_validation_checks_status_path_and_hash(tmp_path):
+    path = tmp_path / "filing.pdf"
+    path.write_bytes(b"%PDF-1.4\nfixture")
+    digest = backfill.hashlib.sha256(path.read_bytes()).hexdigest()
+
+    assert backfill._document_is_valid({
+        "pdf_status": "ok", "local_path": str(path), "content_hash": digest,
+    })
+    assert not backfill._document_is_valid({
+        "pdf_status": "ok", "local_path": str(path), "content_hash": "0" * 64,
+    })
+    assert not backfill._document_is_valid({
+        "pdf_status": "failed", "local_path": str(path), "content_hash": digest,
+    })
+    assert not backfill._document_is_valid({
+        "pdf_status": "ok", "local_path": "data/pdfs/fixture.pdf", "content_hash": digest,
+    })
+
+
 def test_backfill_is_resumable_by_source_chunk(tmp_path, monkeypatch):
     results = []
 

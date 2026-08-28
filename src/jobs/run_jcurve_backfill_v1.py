@@ -11,6 +11,7 @@ from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import urlsplit
 
 import duckdb
 
@@ -27,6 +28,11 @@ from storage.security_master_repository import SecurityMasterRepository
 
 
 BACKFILL_POLICY_VERSION = "market-intel-jcurve-targeted-backfill-v1"
+ATTACHMENT_POLICY_VERSION = "market-intel-jcurve-attachment-ingestion-v4"
+JCURVE_ATTACHMENT_SIGNALS = frozenset({
+    "CAPEX", "CAPACITY", "NEW_FACILITY", "COMMERCIALISATION",
+    "PROJECT_FINANCE", "DEMAND_PATH", "ORDER_AWARD", "PROJECT_ADVERSE",
+})
 SUPPORTED_SOURCES = ("nse_api", "bse_corp")
 
 
@@ -54,11 +60,29 @@ def _parser() -> argparse.ArgumentParser:
     status = sub.add_parser("status")
     status.add_argument("--db-path", default=os.environ.get("MARKET_INTEL_DB_PATH", settings.db_path))
     status.add_argument("--backfill-run-id", required=True)
+    attachments = sub.add_parser(
+        "download-attachments",
+        help="Download only J-curve-signal attachments from a completed metadata backfill",
+    )
+    attachments.add_argument("--db-path", default=os.environ.get("MARKET_INTEL_DB_PATH", settings.db_path))
+    attachments.add_argument("--backfill-run-id", required=True)
+    attachments.add_argument("--max-items", type=int)
+    attachment_status = sub.add_parser("attachment-status")
+    attachment_status.add_argument("--db-path", default=os.environ.get("MARKET_INTEL_DB_PATH", settings.db_path))
+    attachment_status.add_argument("--attachment-run-id", required=True)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.command == "attachment-status":
+        db = Database(args.db_path)
+        try:
+            result = JCurveBackfillRepository(db).attachment_report(args.attachment_run_id)
+        finally:
+            db.close()
+        print(json.dumps(result, indent=2, default=str))
+        return 0
     if args.command == "status":
         db = Database(args.db_path)
         try:
@@ -67,6 +91,13 @@ def main(argv: list[str] | None = None) -> int:
             db.close()
         print(json.dumps(result, indent=2, default=str))
         return 0
+    if args.command == "download-attachments":
+        result = run_attachment_ingestion(
+            db_path=Path(args.db_path), backfill_run_id=args.backfill_run_id,
+            max_items=args.max_items,
+        )
+        print(json.dumps(result, indent=2, default=str))
+        return 0 if result["status"] in {"COMPLETED", "RUNNING"} else 2
     sources = _sources(args.sources)
     if args.from_date > args.to_date:
         raise SystemExit("--from-date must not be after --to-date")
@@ -266,6 +297,175 @@ def _collect_chunk(
             "new_count": 0, "selected_count": 0, "attachment_eligible_count": 0,
             "failure_count": 1, "failures": [{"error": str(exc)}],
         }
+
+
+def run_attachment_ingestion(
+    *, db_path: Path, backfill_run_id: str, max_items: int | None = None,
+) -> dict[str, Any]:
+    if max_items is not None and max_items < 1:
+        raise ValueError("max_items must be positive")
+    db = Database(str(db_path))
+    repo = JCurveBackfillRepository(db)
+    service = HighValueShadowService(db).collection
+    try:
+        parent = repo.report(backfill_run_id)
+        if parent["status"] != "COMPLETED":
+            raise ValueError("attachment ingestion requires a completed metadata backfill")
+        candidates = _attachment_candidates(db, backfill_run_id=backfill_run_id)
+        policy_hash = _hash({
+            "policy_version": ATTACHMENT_POLICY_VERSION,
+            "signals": sorted(JCURVE_ATTACHMENT_SIGNALS),
+            "selection": "COVERED_PARENT_WINDOW_EXACT_COHORT_AND_STRONG_SIGNAL",
+            "cache": "DATABASE_PARENT_DIRECTORY",
+        })
+        candidate_hash = _hash(candidates)
+        attachment_run_id = f"jcurve-attachments-v1-{_hash([backfill_run_id, policy_hash, candidate_hash])[:20]}"
+        repo.start_attachment_run({
+            "attachment_run_id": attachment_run_id,
+            "parent_backfill_run_id": backfill_run_id,
+            "policy_version": ATTACHMENT_POLICY_VERSION,
+            "policy_hash": policy_hash,
+            "candidate_hash": candidate_hash,
+            "candidate_count": len(candidates),
+            "started_at": datetime.now(UTC),
+        })
+        sessions = {
+            "nse_api": NseApiClient().session,
+            "bse_corp": BseCorporateCollector().session,
+        }
+        processed = 0
+        for candidate in candidates:
+            if repo.attachment_item_complete(
+                attachment_run_id=attachment_run_id,
+                raw_event_id=candidate["raw_event_id"],
+            ):
+                continue
+            if max_items is not None and processed >= max_items:
+                break
+            existing = _filing_document(db, candidate["raw_event_id"])
+            if _document_is_valid(existing):
+                result = dict(existing) | {"status": "REUSED_VALID", "error_message": None}
+            else:
+                raw_event = type("RawEvent", (), {
+                    "raw_event_id": candidate["raw_event_id"],
+                    "attachment_url": candidate["attachment_url"],
+                })()
+                summary = {"pdf_fetched": 0, "pdf_extracted": 0}
+                service._process_pdf(
+                    raw_event, summary, session=sessions[candidate["source"]],
+                    enrich_llm=False,
+                )
+                document = _filing_document(db, candidate["raw_event_id"])
+                if _document_is_valid(document):
+                    result = dict(document) | {"status": "VALID", "error_message": None}
+                else:
+                    result = dict(document or {}) | {
+                        "status": "FAILED",
+                        "error_message": (document or {}).get("error_message")
+                        or "PDF did not reach a checksum-valid extracted state",
+                    }
+            repo.record_attachment_item(
+                attachment_run_id=attachment_run_id, candidate=candidate, result=result,
+            )
+            processed += 1
+        report = repo.attachment_report(attachment_run_id)
+        report["processed_this_invocation"] = processed
+        report["resumable"] = report["status"] != "COMPLETED"
+        return report
+    finally:
+        db.close()
+
+
+def _attachment_candidates(db: Database, *, backfill_run_id: str) -> list[dict[str, Any]]:
+    with db.get_connection(read_only=True) as conn:
+        rows = conn.execute(
+            """WITH covered_sources AS (
+                 SELECT DISTINCT backfill_run_id, source
+                 FROM jcurve_targeted_backfill_chunk
+                 WHERE backfill_run_id = ? AND status = 'COMPLETED'
+               ), ranked AS (
+                 SELECT r.raw_event_id, r.source, r.attachment_url,
+                        afd.matched_signals_json, afd.decided_at,
+                        row_number() OVER (
+                          PARTITION BY r.raw_event_id
+                          ORDER BY afd.decided_at DESC, afd.decision_id DESC
+                        ) AS row_number
+                 FROM jcurve_targeted_backfill_run run
+                 JOIN covered_sources covered
+                   ON covered.backfill_run_id = run.backfill_run_id
+                 JOIN raw_event r ON r.source = covered.source
+                  AND CAST(r.published_at AS DATE)
+                      BETWEEN run.requested_from AND run.requested_to
+                 JOIN jcurve_targeted_backfill_target target
+                   ON target.backfill_run_id = run.backfill_run_id
+                  AND (
+                    (r.source = 'nse_api' AND (
+                      (r.isin IS NOT NULL AND r.isin = target.isin)
+                      OR upper(coalesce(r.symbol, '')) = upper(coalesce(target.nse_symbol, ''))
+                    ))
+                    OR (r.source = 'bse_corp' AND (
+                      (r.isin IS NOT NULL AND r.isin = target.isin)
+                      OR upper(coalesce(r.symbol, '')) = upper(coalesce(target.bse_code, ''))
+                    ))
+                  )
+                 JOIN announcement_filter_decision afd
+                   ON afd.raw_event_id = r.raw_event_id
+                 WHERE run.backfill_run_id = ?
+                   AND afd.policy_version = ?
+                   AND afd.decision IN ('KEEP', 'FETCH_ATTACHMENT')
+                   AND r.attachment_url IS NOT NULL AND trim(r.attachment_url) <> ''
+               )
+               SELECT raw_event_id, source, attachment_url, matched_signals_json
+               FROM ranked WHERE row_number = 1 ORDER BY source, raw_event_id""",
+            [backfill_run_id, backfill_run_id, POLICY_VERSION],
+        ).fetchall()
+    candidates = []
+    for raw_event_id, source, attachment_url, signals_json in rows:
+        attachment_url = str(attachment_url).strip()
+        if not _is_http_url(attachment_url):
+            continue
+        signals = tuple(sorted(set(json.loads(signals_json or "[]"))))
+        matched = tuple(signal for signal in signals if signal in JCURVE_ATTACHMENT_SIGNALS)
+        if not matched:
+            continue
+        candidates.append({
+            "raw_event_id": int(raw_event_id), "source": str(source),
+            "attachment_url": attachment_url, "matched_signals": list(matched),
+            "selection_reason": "STRONG_JCURVE_SIGNAL",
+        })
+    return candidates
+
+
+def _is_http_url(value: str) -> bool:
+    parsed = urlsplit(value)
+    return parsed.scheme.lower() in {"http", "https"} and bool(parsed.netloc)
+
+
+def _filing_document(db: Database, raw_event_id: int) -> dict[str, Any] | None:
+    with db.get_connection(read_only=True) as conn:
+        row = conn.execute(
+            """SELECT document_id, local_path, content_hash, file_size,
+                      pdf_status, error_message
+               FROM filing_document WHERE raw_event_id = ?
+               ORDER BY document_id DESC LIMIT 1""",
+            [raw_event_id],
+        ).fetchone()
+    if not row:
+        return None
+    return dict(zip(
+        ("document_id", "local_path", "content_hash", "file_size", "pdf_status", "error_message"),
+        row,
+    ))
+
+
+def _document_is_valid(document: dict[str, Any] | None) -> bool:
+    if not document or str(document.get("pdf_status") or "").lower() != "ok":
+        return False
+    path = Path(str(document.get("local_path") or ""))
+    expected = str(document.get("content_hash") or "")
+    if not path.is_absolute() or not path.is_file() or len(expected) != 64:
+        return False
+    return hashlib.sha256(path.read_bytes()).hexdigest() == expected
 
 
 def _retain_targets(

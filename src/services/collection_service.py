@@ -20,6 +20,7 @@ import hashlib
 import logging
 import re
 from datetime import date, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 from collectors.base import CollectorItem
@@ -558,7 +559,8 @@ class CollectionService:
             return
 
         try:
-            fetcher = PdfFetcher(cache_dir="./data/pdfs", session=session)
+            cache_dir = Path(self.db.db_path).resolve().parent / "market_intel_pdfs"
+            fetcher = PdfFetcher(cache_dir=str(cache_dir), session=session)
             fetch_result = fetcher.fetch(attachment_url)
 
             if fetch_result.status not in ("ok", "cached"):
